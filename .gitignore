@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 数据目录（太大不适合版本控制）
+watermark_demowen/
+watermark_demowen_masks/
+data/synthetic/
+data/clean_images/
+data/*/
+
+# 模型和日志
+checkpoints/*.pth
+logs/
+results/
+*.log
+
+# 临时文件
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# 测试结果目录
+*_test_results/
+test_*.jpg
+test_*.png
+
+# 保留目录结构但忽略内容
+!checkpoints/.gitkeep
+!logs/.gitkeep
+!results/.gitkeep
+!data/.gitkeep
