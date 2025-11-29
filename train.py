@@ -14,6 +14,7 @@ from models.unet import UNet, ResidualUNet
 from dataset import create_dataloaders
 from losses import CombinedLoss
 
+
 def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
     """训练一个epoch"""
     model.train()

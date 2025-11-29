@@ -7,12 +7,16 @@
 3. 分块处理 (内存高效)
 """
 import os
+import sys
 import cv2
 import torch
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 import argparse
+
+# 添加项目根目录到路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import Config
 from models.unet import UNet

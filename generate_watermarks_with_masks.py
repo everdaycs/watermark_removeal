@@ -27,6 +27,7 @@
 import os
 import random
 import math
+import io
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import numpy as np
@@ -58,12 +59,28 @@ ENABLE_VISIBILITY_VALIDATION = True
 
 NUM_VARIANTS_PER_IMAGE = 32
 INPUT_DIR = "/home/kaga/Desktop/watermaker remover/20251127_no_watermark_demo"
-OUTPUT_DIR = "./watermark_demowen"
-MASK_DIR = "./watermark_demowen_masks"
+OUTPUT_DIR = "./merged_watermark_images"  # 修改：输出到合并目录
+MASK_DIR = "./merged_watermark_masks"     # 修改：输出到合并目录
 LOGO_PATH = "./logo.png"
 
 TEXT_CANDIDATES = ["DEMO", "SAMPLE", "Preview", "Copyright", "DemoWen", 
-                   "NoRepost", "2025", "WATERMARK", "Test", "Draft"]
+                   "NoRepost", "2025", "WATERMARK", "Test", "Draft",
+                   "演示", "示例", "测试", "水印", "版权", "禁止转载", "保留所有权利"]
+
+# SVG 资源配置
+ELECFANS_LOGO_SVG = "./logos/elecfans-logo.svg"
+ELECFANS_WEB_SVG = "./logos/elecfans-web.svg"
+WECHAT_SVG = "./logos/WeChat.svg"
+
+# SVG 渲染缓存（避免重复处理相同的SVG）
+_SVG_CACHE = {}
+
+try:
+    import cairosvg
+    CAIROSVG_AVAILABLE = True
+except ImportError:
+    CAIROSVG_AVAILABLE = False
+    print("警告: cairosvg 未安装。SVG 风格将无法使用。请运行: pip install cairosvg")
 
 # 启用的风格列表 (可以注释掉某些风格来禁用)
 ENABLED_STYLES = [
@@ -80,15 +97,15 @@ ENABLED_STYLES = [
     'noisy_eroded_text',       # 11
     'banner_box',              # 12
     'curved_text',             # 13
-    'corner_website_logo',     # 14 - ElecFans风格角落网站LOGO水印
-    'mini_social_corner_logo', # 15 - 小型微信风格社交账号角标水印
-    'combined_styles',         # 16
+    'corner_website_logo',     # 14
+    'mini_social_corner_logo', # 15
+    'elecfans_logo_svg_corner',   # 16
+    'elecfans_web_svg_center',    # 17
+    'wechat_svg_corner_id',       # 18
+    'combined_styles',         # 19
 ]
 
 COMBINED_STYLE_PROBABILITY = 0.3  # 使用组合风格的概率
-
-# 角落网站LOGO风格的概率权重 (0.0-1.0, 相对于其他风格)
-CORNER_WEBSITE_LOGO_WEIGHT = 0.4  # 40% 概率选择此风格
 
 # ============================================================================
 # 辅助函数
@@ -121,11 +138,27 @@ def load_image(image_path):
         return None
 
 def get_font(font_size):
-    """获取字体，优先使用系统字体"""
+    """获取字体，优先使用支持中文的字体"""
+    # 优先尝试支持中文的字体
+    chinese_fonts = [
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",  # Noto Serif CJK Bold
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",   # Noto Sans CJK Bold
+        "/usr/share/fonts/truetype/arphic/uming.ttc",            # AR PL UMing
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # DejaVu Sans Bold
+    ]
+    
+    for font_path in chinese_fonts:
+        try:
+            return ImageFont.truetype(font_path, font_size)
+        except (OSError, IOError):
+            continue
+    
+    # 如果都没有找到，使用默认字体
     try:
-        return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
-    except:
         return ImageFont.load_default()
+    except:
+        # 最后的fallback
+        return None
 
 def get_text_bbox(draw, text, font):
     """获取文本边界框大小"""
@@ -275,6 +308,60 @@ def validate_watermark_visibility(overlay_array, w, h):
         'coverage': coverage,
         'reasons': reasons
     }
+
+# ============================================================================
+# SVG 渲染辅助函数
+# ============================================================================
+
+def load_svg_as_rgba(svg_path: str, target_width: int, target_height: int) -> Image.Image:
+    """
+    将 SVG 文件渲染为 PIL RGBA 图像
+    
+    使用 cairosvg 将 SVG 转换为 PNG，然后加载为 RGBA 图像。
+    结果被缓存以避免重复渲染相同的 SVG。
+    
+    Args:
+        svg_path (str): SVG 文件路径
+        target_width (int): 目标宽度（像素）
+        target_height (int): 目标高度（像素）
+    
+    Returns:
+        PIL.Image: RGBA 图像，或 None 如果加载失败
+    """
+    if not CAIROSVG_AVAILABLE:
+        return None
+    
+    # 检查缓存
+    cache_key = (svg_path, target_width, target_height)
+    if cache_key in _SVG_CACHE:
+        return _SVG_CACHE[cache_key].copy()
+    
+    try:
+        if not os.path.exists(svg_path):
+            print(f"警告: SVG 文件不存在: {svg_path}")
+            return None
+        
+        # 使用 cairosvg 将 SVG 转换为 PNG 字节
+        png_bytes = io.BytesIO()
+        cairosvg.svg2png(
+            url=svg_path,
+            output_width=target_width,
+            output_height=target_height,
+            write_to=png_bytes
+        )
+        png_bytes.seek(0)
+        
+        # 加载 PNG 为 RGBA 图像
+        img = Image.open(png_bytes).convert('RGBA')
+        
+        # 缓存结果
+        _SVG_CACHE[cache_key] = img.copy()
+        
+        return img
+    
+    except Exception as e:
+        print(f"错误: 无法渲染 SVG {svg_path}: {e}")
+        return None
 
 # ============================================================================
 # 水印合成函数 - 返回 overlay RGBA 图像 (强制可见性)
@@ -501,14 +588,14 @@ def outlined_text(w, h):
     # 强制透明度范围
     alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
     # 强制粗轮廓
-    outline_width = random.randint(3, 6)
+    outline_width = random.randint(2, 4)  # 减少轮廓宽度以避免过度重叠
     rotation = random.uniform(-15, 15)
-    
+
     overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
     overlay_draw = ImageDraw.Draw(overlay)
     text_w, text_h = get_text_bbox(overlay_draw, text, font)
     pos = ((w - text_w) // 2, (h - text_h) // 2)
-    
+
     # 自适应颜色: 轮廓颜色与主文本对比
     bg_brightness = BRIGHTNESS_THRESHOLD
     if bg_brightness > BRIGHTNESS_THRESHOLD:
@@ -517,20 +604,22 @@ def outlined_text(w, h):
     else:
         outline_color = (255, 255, 255)
         main_color = (0, 0, 0)
-    
-    # 绘制轮廓：多次绘制稍微偏移的文本
-    for adj_x in range(-outline_width, outline_width + 1):
-        for adj_y in range(-outline_width, outline_width + 1):
-            if adj_x != 0 or adj_y != 0:
-                outline_draw_pos = (pos[0] + adj_x, pos[1] + adj_y)
-                overlay = draw_text_with_alpha(overlay, outline_draw_pos, text, font, outline_color, alpha)
-    
-    # 绘制主文本（更强不透明度）
+
+    # 创建轮廓：使用固定的4个主要方向，避免对角线重叠
+    outline_offsets = [
+        (-outline_width, 0), (outline_width, 0), (0, -outline_width), (0, outline_width)
+    ]
+
+    # 绘制轮廓：每个位置只绘制一次，透明度大幅降低
+    outline_alpha = alpha * 0.3  # 轮廓非常透明，避免任何重叠区域过暗
+    for offset_x, offset_y in outline_offsets:
+        outline_pos = (pos[0] + offset_x, pos[1] + offset_y)
+        overlay = draw_text_with_alpha(overlay, outline_pos, text, font, outline_color, outline_alpha)    # 绘制主文本（更强不透明度）
     overlay = draw_text_with_alpha(overlay, pos, text, font, main_color, alpha * 0.9)
-    
+
     if rotation != 0:
         overlay = overlay.rotate(rotation, expand=False, fillcolor=(255, 255, 255, 0))
-    
+
     return overlay
 def shadow_text(w, h):
     """风格9: 带阴影的文本 (可见性强制版)"""
@@ -759,325 +848,6 @@ def curved_text(w, h):
     
     return overlay
 
-def corner_website_logo(w, h):
-    """
-    风格14: 角落网站LOGO水印 - 模拟中国科技网站的角落水印
-    
-    组成: 圆形图标 + 品牌名称 + 网站URL，水平排列
-    位置: 偏好底部角落，带随机边距
-    样式: 半透明，带柔和模糊，可能有阴影或轮廓确保对比度
-    """
-    # 候选品牌名称和URL
-    brand_candidates = ["电子发烧友", "DemoWen", "TechZone", "ElecFans", "AI-Lab", "CircuitHub", "TechBlog"]
-    url_candidates = ["www.elecfans.com", "www.demowen.com", "www.example.com", "www.techzone.cn", "www.circuithub.com"]
-    
-    # 随机选择内容
-    brand_name = random.choice(brand_candidates)
-    website_url = random.choice(url_candidates)
-    
-    # 尺寸参数 - 相对于图像大小
-    total_width = int(w * random.uniform(0.20, 0.40))  # 总宽度: 20-40% 图像宽度
-    total_height = int(h * random.uniform(0.08, 0.15))  # 总高度: 8-15% 图像高度
-    
-    # 字体大小 - 确保可见性
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(total_height * 0.35))
-    font = get_font(font_size)
-    
-    # 透明度 - 在可见范围内
-    alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
-    
-    # 创建overlay
-    overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
-    overlay_draw = ImageDraw.Draw(overlay)
-    
-    # 计算各元素尺寸
-    brand_bbox = get_text_bbox(overlay_draw, brand_name, font)
-    url_bbox = get_text_bbox(overlay_draw, website_url, font)
-    
-    # 图标尺寸 (圆形)
-    icon_size = int(total_height * 0.8)  # 图标占高度的80%
-    
-    # 计算总布局宽度
-    spacing = int(total_height * 0.1)  # 元素间距
-    layout_width = icon_size + spacing + brand_bbox[0] + spacing + url_bbox[0]
-    
-    # 如果布局太宽，缩小字体
-    if layout_width > total_width:
-        scale_factor = total_width / layout_width
-        font_size = max(MIN_TEXT_HEIGHT_PX, int(font_size * scale_factor))
-        font = get_font(font_size)
-        # 重新计算尺寸
-        brand_bbox = get_text_bbox(overlay_draw, brand_name, font)
-        url_bbox = get_text_bbox(overlay_draw, website_url, font)
-        layout_width = icon_size + spacing + brand_bbox[0] + spacing + url_bbox[0]
-    
-    # 确定位置 - 偏好底部角落
-    corners = ['bottom-left', 'bottom-right', 'top-left', 'top-right']
-    # 70% 概率选择底部角落
-    if random.random() < 0.7:
-        corner = random.choice(['bottom-left', 'bottom-right'])
-    else:
-        corner = random.choice(corners)
-    
-    # 随机边距 (8-32像素)
-    margin = random.randint(8, 32)
-    
-    if corner == 'bottom-left':
-        base_x = margin
-        base_y = h - margin - total_height
-    elif corner == 'bottom-right':
-        base_x = w - margin - layout_width
-        base_y = h - margin - total_height
-    elif corner == 'top-left':
-        base_x = margin
-        base_y = margin
-    else:  # top-right
-        base_x = w - margin - layout_width
-        base_y = margin
-    
-    # 确保不超出边界
-    base_x = max(0, min(base_x, w - layout_width))
-    base_y = max(0, min(base_y, h - total_height))
-    
-    # 颜色选择 - 主要使用浅色，但确保对比度
-    bg_brightness = BRIGHTNESS_THRESHOLD
-    if bg_brightness > BRIGHTNESS_THRESHOLD:
-        # 亮背景 - 使用深色文本，可能加浅色轮廓
-        text_color = (0, 0, 0)
-        outline_color = (255, 255, 255)
-        icon_fill = (50, 50, 50)
-    else:
-        # 暗背景 - 使用浅色文本，可能加深色轮廓
-        text_color = (255, 255, 255)
-        outline_color = (0, 0, 0)
-        icon_fill = (200, 200, 200)
-    
-    # 绘制阴影/轮廓 (如果需要增强对比度)
-    shadow_offset = 1
-    use_shadow = random.random() < 0.6  # 60% 概率使用阴影
-    
-    # 当前绘制位置
-    current_x = base_x
-    
-    # 1. 绘制图标 (圆形)
-    icon_center_x = current_x + icon_size // 2
-    icon_center_y = base_y + total_height // 2
-    
-    # 图标背景圆
-    overlay_draw.ellipse(
-        [icon_center_x - icon_size//2, icon_center_y - icon_size//2,
-         icon_center_x + icon_size//2, icon_center_y + icon_size//2],
-        fill=icon_fill + (int(255 * alpha),)
-    )
-    
-    # 简单的图标内容 (1-2条线，模拟电路符号)
-    num_lines = random.randint(1, 2)
-    for i in range(num_lines):
-        if i == 0:
-            # 水平线
-            line_y = icon_center_y
-            overlay_draw.line(
-                [icon_center_x - icon_size//3, line_y, icon_center_x + icon_size//3, line_y],
-                fill=(255 - icon_fill[0], 255 - icon_fill[1], 255 - icon_fill[2]) + (int(255 * alpha),),
-                width=2
-            )
-        else:
-            # 垂直线
-            line_x = icon_center_x
-            overlay_draw.line(
-                [line_x, icon_center_y - icon_size//3, line_x, icon_center_y + icon_size//3],
-                fill=(255 - icon_fill[0], 255 - icon_fill[1], 255 - icon_fill[2]) + (int(255 * alpha),),
-                width=2
-            )
-    
-    current_x += icon_size + spacing
-    
-    # 2. 绘制品牌名称
-    brand_y = base_y + (total_height - brand_bbox[1]) // 2
-    
-    if use_shadow:
-        # 绘制阴影
-        overlay = draw_text_with_alpha(overlay, (current_x + shadow_offset, brand_y + shadow_offset), 
-                                     brand_name, font, (0, 0, 0), alpha * 0.7)
-    
-    # 绘制主文本
-    overlay = draw_text_with_alpha(overlay, (current_x, brand_y), brand_name, font, text_color, alpha)
-    
-    current_x += brand_bbox[0] + spacing
-    
-    # 3. 绘制网站URL
-    url_y = base_y + (total_height - url_bbox[1]) // 2
-    
-    if use_shadow:
-        # 绘制阴影
-        overlay = draw_text_with_alpha(overlay, (current_x + shadow_offset, url_y + shadow_offset), 
-                                     website_url, font, (0, 0, 0), alpha * 0.7)
-    
-    # 绘制主文本
-    overlay = draw_text_with_alpha(overlay, (current_x, url_y), website_url, font, text_color, alpha)
-    
-    # 应用轻微模糊以获得柔和效果
-    blur_radius = random.uniform(0.3, 0.8)
-    try:
-        overlay = overlay.filter(ImageFilter.GaussianBlur(radius=blur_radius))
-    except:
-        pass  # 如果模糊失败，继续
-    
-    return overlay
-
-def mini_social_corner_logo(w, h):
-    """
-    风格15: 小型微信风格社交账号角标水印
-    
-    组成: 小圆形头像图标 + 单行社交账号名称，水平排列
-    位置: 紧贴底部角落，随机小边距
-    样式: 半透明，带阴影确保对比度，小尺寸
-    """
-    # 候选账号名称
-    account_candidates = ["电客一点通", "电路小课堂", "AnalogTips", "DemoWenLab", "电子工坊", "芯片实验室"]
-    
-    # 随机选择账号
-    account_name = random.choice(account_candidates)
-    
-    # 尺寸参数 - 相对于图像大小，更小尺寸
-    total_width = int(w * random.uniform(0.10, 0.20))   # 总宽度: 10-20% 图像宽度
-    total_height = int(h * random.uniform(0.04, 0.08))  # 总高度: 4-8% 图像高度
-    
-    # 字体大小 - 确保可见性但较小
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(total_height * 0.7))
-    font = get_font(font_size)
-    
-    # 透明度 - 在可见范围内
-    alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
-    
-    # 创建overlay
-    overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
-    overlay_draw = ImageDraw.Draw(overlay)
-    
-    # 计算各元素尺寸
-    text_bbox = get_text_bbox(overlay_draw, account_name, font)
-    
-    # 图标尺寸 (圆形，小尺寸)
-    icon_size = min(total_height - 4, int(total_height * 0.9))  # 图标占高度的90%
-    
-    # 计算总布局宽度
-    spacing = int(total_height * 0.15)  # 元素间距
-    layout_width = icon_size + spacing + text_bbox[0]
-    
-    # 如果布局太宽，缩小字体
-    if layout_width > total_width:
-        scale_factor = total_width / layout_width
-        font_size = max(MIN_TEXT_HEIGHT_PX, int(font_size * scale_factor))
-        font = get_font(font_size)
-        # 重新计算尺寸
-        text_bbox = get_text_bbox(overlay_draw, account_name, font)
-        layout_width = icon_size + spacing + text_bbox[0]
-    
-    # 确定位置 - 偏好底部右角，但有时左下角
-    if random.random() < 0.9:  # 90% 概率选择右下角
-        corner = 'bottom-right'
-    else:
-        corner = 'bottom-left'
-    
-    # 小边距 (4-16像素)
-    margin_x = random.randint(4, 16)
-    margin_y = random.randint(4, 16)
-    
-    if corner == 'bottom-right':
-        base_x = w - margin_x - layout_width
-        base_y = h - margin_y - total_height
-    else:  # bottom-left
-        base_x = margin_x
-        base_y = h - margin_y - total_height
-    
-    # 确保不超出边界
-    base_x = max(0, min(base_x, w - layout_width))
-    base_y = max(0, min(base_y, h - total_height))
-    
-    # 颜色选择 - 图标使用固定调色板，文本使用对比色
-    icon_colors = [
-        (34, 197, 94),   # 绿色
-        (59, 130, 246),  # 蓝色
-        (107, 114, 128)  # 灰色
-    ]
-    icon_color = random.choice(icon_colors)
-    text_color = (255, 255, 255)  # 白色文字
-    
-    # 绘制阴影/轮廓
-    shadow_offset = (1, 1)
-    shadow_color = (0, 0, 0)
-    use_shadow = random.random() < 0.7  # 70% 概率使用阴影
-    
-    # 当前绘制位置
-    current_x = base_x
-    
-    # 1. 绘制图标 (圆形)
-    icon_center_x = current_x + icon_size // 2
-    icon_center_y = base_y + total_height // 2
-    
-    # 图标背景圆
-    overlay_draw.ellipse(
-        [icon_center_x - icon_size//2, icon_center_y - icon_size//2,
-         icon_center_x + icon_size//2, icon_center_y + icon_size//2],
-        fill=icon_color + (int(255 * alpha),)
-    )
-    
-    # 可选：绘制1-2条白色内部线条（模拟聊天/电子符号）
-    if random.random() > 0.3:  # 70% 概率绘制内部图案
-        num_lines = random.randint(1, 2)
-        line_color = (255, 255, 255)
-        
-        for i in range(num_lines):
-            if random.random() > 0.5:
-                # 水平线（模拟消息气泡）
-                line_y = icon_center_y + random.randint(-icon_size//4, icon_size//4)
-                overlay_draw.line(
-                    [icon_center_x - icon_size//3, line_y, icon_center_x + icon_size//3, line_y],
-                    fill=line_color + (int(255 * alpha * 0.8),),
-                    width=1
-                )
-            else:
-                # 垂直线或对角线（模拟电路符号）
-                if random.random() > 0.5:
-                    # 垂直线
-                    line_x = icon_center_x + random.randint(-icon_size//4, icon_size//4)
-                    overlay_draw.line(
-                        [line_x, icon_center_y - icon_size//3, line_x, icon_center_y + icon_size//3],
-                        fill=line_color + (int(255 * alpha * 0.8),),
-                        width=1
-                    )
-                else:
-                    # 对角线
-                    overlay_draw.line(
-                        [icon_center_x - icon_size//4, icon_center_y - icon_size//4,
-                         icon_center_x + icon_size//4, icon_center_y + icon_size//4],
-                        fill=line_color + (int(255 * alpha * 0.8),),
-                        width=1
-                    )
-    
-    current_x += icon_size + spacing
-    
-    # 2. 绘制账号名称
-    text_y = base_y + (total_height - text_bbox[1]) // 2
-    
-    if use_shadow:
-        # 绘制阴影
-        overlay = draw_text_with_alpha(overlay, (current_x + shadow_offset[0], text_y + shadow_offset[1]), 
-                                     account_name, font, shadow_color, alpha * 0.4)
-    
-    # 绘制主文本
-    overlay = draw_text_with_alpha(overlay, (current_x, text_y), account_name, font, text_color, alpha)
-    
-    # 可选：轻微模糊效果
-    if random.random() > 0.5:
-        blur_radius = random.uniform(0.3, 0.8)
-        try:
-            overlay = overlay.filter(ImageFilter.GaussianBlur(radius=blur_radius))
-        except:
-            pass  # 如果模糊失败，继续
-    
-    return overlay
-
 def combined_styles(w, h, enabled_single_styles):
     """风格14: 组合多个风格 (可见性强制版)"""
     if len(enabled_single_styles) < 2:
@@ -1099,177 +869,216 @@ def combined_styles(w, h, enabled_single_styles):
             continue
     
     return overlay
-    
-    # 应用渐变掩码到overlay
-    overlay_array = np.array(temp_overlay)
-    overlay_array[:, :, 3] = (overlay_array[:, :, 3] * gradient_array / 255).astype(np.uint8)
-    overlay = Image.fromarray(overlay_array, 'RGBA')
-    
-    return overlay
 
-def noisy_eroded_text(w, h):
-    """风格11: 有噪声边缘的文本 - 模拟压缩损坏或侵蚀的水印"""
+def corner_website_logo(w, h):
+    """风格15: 角落网站LOGO - 模拟网站风格的角落水印"""
     text = random.choice(TEXT_CANDIDATES)
-    font_size = max(35, int(w * random.uniform(0.08, 0.15)))
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.04, 0.08)))
     font = get_font(font_size)
-    alpha = random.uniform(0.25, 0.6)
-    color = random.choice([(255, 255, 255), (0, 0, 0), (150, 150, 150)])
+    alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
     
     overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
     overlay_draw = ImageDraw.Draw(overlay)
-    text_w, text_h = get_text_bbox(overlay_draw, text, font)
-    pos = ((w - text_w) // 2, (h - text_h) // 2)
     
-    # 绘制初始文本
-    overlay_draw.text(pos, text, font=font, fill=color + (int(255 * alpha),))
+    # 网站风格：添加"www."前缀
+    website_text = f"www.{text.lower()}.com"
+    text_w, text_h = get_text_bbox(overlay_draw, website_text, font)
     
-    # 应用噪声和模糊以模拟损坏的边缘
-    overlay_array = np.array(overlay)
-    alpha_channel = overlay_array[:, :, 3].astype(float)
+    # 角落位置
+    corner = random.choice(['tl', 'tr', 'bl', 'br'])
+    margin = max(10, int(w * 0.015))
     
-    # 添加随机噪声
-    noise = np.random.normal(0, 15, alpha_channel.shape)
-    alpha_channel = np.clip(alpha_channel + noise, 0, 255)
+    if corner == 'tl':
+        pos = (margin, margin)
+    elif corner == 'tr':
+        pos = (max(0, w - text_w - margin), margin)
+    elif corner == 'bl':
+        pos = (margin, max(0, h - text_h - margin))
+    else:  # br
+        pos = (max(0, w - text_w - margin), max(0, h - text_h - margin))
     
-    # 应用轻微的腐蚀（模糊+阈值化）
-    from scipy import ndimage
+    # 自适应颜色
+    color = select_contrasting_color(BRIGHTNESS_THRESHOLD)
+    overlay = draw_text_with_alpha(overlay, pos, website_text, font, color, alpha)
+    
+    return overlay
+
+def mini_social_corner_logo(w, h):
+    """风格16: 迷你社交角落LOGO - 模拟微信等社交媒体的小型角落水印"""
+    text = random.choice(TEXT_CANDIDATES)
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.03, 0.06)))
+    font = get_font(font_size)
+    alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
+    
+    overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    
+    # 社交媒体风格：添加图标符号
+    social_icons = ['●', '◆', '■', '▲', '▼']
+    icon = random.choice(social_icons)
+    social_text = f"{icon} {text}"
+    text_w, text_h = get_text_bbox(overlay_draw, social_text, font)
+    
+    # 角落位置
+    corner = random.choice(['tl', 'tr', 'bl', 'br'])
+    margin = max(8, int(w * 0.01))
+    
+    if corner == 'tl':
+        pos = (margin, margin)
+    elif corner == 'tr':
+        pos = (max(0, w - text_w - margin), margin)
+    elif corner == 'bl':
+        pos = (margin, max(0, h - text_h - margin))
+    else:  # br
+        pos = (max(0, w - text_w - margin), max(0, h - text_h - margin))
+    
+    # 自适应颜色
+    color = select_contrasting_color(BRIGHTNESS_THRESHOLD)
+    overlay = draw_text_with_alpha(overlay, pos, social_text, font, color, alpha)
+    
+    return overlay
+
+def elecfans_logo_svg_corner(w, h):
+    """风格17: ElecFans LOGO SVG角落 - 使用SVG格式的ElecFans logo"""
+    if not CAIROSVG_AVAILABLE or not os.path.exists(ELECFANS_LOGO_SVG):
+        # 降级到文本版本
+        return corner_website_logo(w, h)
+    
     try:
-        alpha_channel = ndimage.gaussian_filter(alpha_channel, sigma=0.8)
-    except:
-        # 如果scipy不可用，使用PIL的模糊
-        temp_img = Image.fromarray(alpha_channel.astype(np.uint8), 'L')
-        temp_img = temp_img.filter(ImageFilter.GaussianBlur(radius=0.8))
-        alpha_channel = np.array(temp_img).astype(float)
-    
-    # 应用阈值以保持可见性
-    threshold = np.random.randint(50, 100)
-    alpha_channel = np.where(alpha_channel > threshold, alpha_channel, 0)
-    
-    overlay_array[:, :, 3] = np.clip(alpha_channel, 0, 255).astype(np.uint8)
-    overlay = Image.fromarray(overlay_array, 'RGBA')
-    
-    return overlay
+        svg_rgba = load_svg_as_rgba(ELECFANS_LOGO_SVG)
+        if svg_rgba is None:
+            return corner_website_logo(w, h)
+        
+        # 缩放SVG
+        logo_w = int(w * random.uniform(0.08, 0.15))
+        ratio = logo_w / svg_rgba.width if svg_rgba.width > 0 else 1
+        logo_h = int(svg_rgba.height * ratio)
+        svg_rgba = svg_rgba.resize((logo_w, logo_h), Image.Resampling.LANCZOS)
+        
+        # 应用透明度
+        alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
+        svg_array = np.array(svg_rgba)
+        svg_array[:, :, 3] = (svg_array[:, :, 3] * alpha).astype(np.uint8)
+        svg_rgba = Image.fromarray(svg_array)
+        
+        overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
+        
+        # 角落位置
+        corner = random.choice(['tl', 'tr', 'bl', 'br'])
+        margin = max(10, int(w * 0.015))
+        
+        if corner == 'tl':
+            pos = (margin, margin)
+        elif corner == 'tr':
+            pos = (max(0, w - logo_w - margin), margin)
+        elif corner == 'bl':
+            pos = (margin, max(0, h - logo_h - margin))
+        else:  # br
+            pos = (max(0, w - logo_w - margin), max(0, h - logo_h - margin))
+        
+        overlay.paste(svg_rgba, pos, svg_rgba)
+        return overlay
+        
+    except Exception as e:
+        # 降级到文本版本
+        return corner_website_logo(w, h)
 
-def banner_box(w, h):
-    """风格12: 带背景条的文本 - 在矩形或条形背景后面的文本"""
-    text = random.choice(TEXT_CANDIDATES)
-    font_size = max(30, int(w * random.uniform(0.08, 0.14)))
-    font = get_font(font_size)
-    text_alpha = random.uniform(0.4, 0.75)
-    box_alpha = random.uniform(0.1, 0.35)
+def elecfans_web_svg_center(w, h):
+    """风格18: ElecFans Web SVG居中 - 使用SVG格式的ElecFans web logo居中"""
+    if not CAIROSVG_AVAILABLE or not os.path.exists(ELECFANS_WEB_SVG):
+        # 降级到居中文本
+        return single_text_center(w, h)
     
-    # 背景条方向
-    is_horizontal = random.choice([True, False])
-    
-    overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
-    overlay_draw = ImageDraw.Draw(overlay)
-    text_w, text_h = get_text_bbox(overlay_draw, text, font)
-    
-    # 文本位置
-    text_x = (w - text_w) // 2
-    text_y = (h - text_h) // 2
-    
-    # 背景条颜色
-    box_color = random.choice([(255, 255, 255), (0, 0, 0), (100, 100, 100), (200, 100, 100)])
-    
-    if is_horizontal:
-        # 水平条
-        padding = random.randint(5, 15)
-        box_x0 = max(0, text_x - padding)
-        box_y0 = max(0, text_y - padding)
-        box_x1 = min(w, text_x + text_w + padding)
-        box_y1 = min(h, text_y + text_h + padding)
-    else:
-        # 垂直条
-        padding = random.randint(5, 15)
-        box_height = h // random.randint(3, 5)
-        box_y0 = (h - box_height) // 2
-        box_x0 = max(0, text_x - padding)
-        box_y1 = min(h, box_y0 + box_height)
-        box_x1 = min(w, text_x + text_w + padding)
-    
-    # 绘制背景条
-    overlay_draw.rectangle(
-        [box_x0, box_y0, box_x1, box_y1],
-        fill=box_color + (int(255 * box_alpha),)
-    )
-    
-    # 绘制文本
-    text_color = random.choice([(255, 255, 255), (0, 0, 0), (50, 50, 50)])
-    overlay_draw.text((text_x, text_y), text, font=font, fill=text_color + (int(255 * text_alpha),))
-    
-    return overlay
+    try:
+        svg_rgba = load_svg_as_rgba(ELECFANS_WEB_SVG)
+        if svg_rgba is None:
+            return single_text_center(w, h)
+        
+        # 缩放SVG
+        logo_w = int(w * random.uniform(0.15, 0.25))
+        ratio = logo_w / svg_rgba.width if svg_rgba.width > 0 else 1
+        logo_h = int(svg_rgba.height * ratio)
+        svg_rgba = svg_rgba.resize((logo_w, logo_h), Image.Resampling.LANCZOS)
+        
+        # 应用透明度
+        alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
+        svg_array = np.array(svg_rgba)
+        svg_array[:, :, 3] = (svg_array[:, :, 3] * alpha).astype(np.uint8)
+        svg_rgba = Image.fromarray(svg_array)
+        
+        overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
+        
+        # 居中位置
+        pos = ((w - logo_w) // 2, (h - logo_h) // 2)
+        overlay.paste(svg_rgba, pos, svg_rgba)
+        
+        return overlay
+        
+    except Exception as e:
+        # 降级到居中文本
+        return single_text_center(w, h)
 
-def curved_text(w, h):
-    """风格13: 弧形排列的文本 - 沿弧线排列字符"""
-    text = random.choice(TEXT_CANDIDATES)
-    font_size = max(20, int(w * random.uniform(0.04, 0.1)))
-    font = get_font(font_size)
-    alpha = random.uniform(0.25, 0.6)
-    color = random.choice([(255, 255, 255), (0, 0, 0), (100, 100, 100)])
+def wechat_svg_corner_id(w, h):
+    """风格19: 微信SVG角落带ID - 使用微信SVG logo和随机ID"""
+    if not CAIROSVG_AVAILABLE or not os.path.exists(WECHAT_SVG):
+        # 降级到迷你社交角落
+        return mini_social_corner_logo(w, h)
     
-    overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
-    overlay_draw = ImageDraw.Draw(overlay)
-    
-    # 弧线参数
-    center_x = w // 2
-    center_y = h // 2
-    radius = min(w, h) * random.uniform(0.25, 0.45)
-    arc_start_angle = random.uniform(-90, 90)
-    
-    # 沿弧线排列字符
-    char_list = list(text)
-    angle_step = 10 if len(char_list) > 1 else 0
-    
-    for i, char in enumerate(char_list):
-        angle = arc_start_angle + i * angle_step
-        angle_rad = math.radians(angle)
+    try:
+        svg_rgba = load_svg_as_rgba(WECHAT_SVG)
+        if svg_rgba is None:
+            return mini_social_corner_logo(w, h)
         
-        # 计算字符位置
-        char_x = center_x + radius * math.cos(angle_rad)
-        char_y = center_y + radius * math.sin(angle_rad)
+        # 缩放SVG
+        logo_w = int(w * random.uniform(0.06, 0.12))
+        ratio = logo_w / svg_rgba.width if svg_rgba.width > 0 else 1
+        logo_h = int(svg_rgba.height * ratio)
+        svg_rgba = svg_rgba.resize((logo_w, logo_h), Image.Resampling.LANCZOS)
         
-        # 创建旋转的字符
-        char_img = Image.new('RGBA', (font_size * 2, font_size * 2), (255, 255, 255, 0))
-        char_draw = ImageDraw.Draw(char_img)
-        char_draw.text((font_size // 2, font_size // 4), char, font=font, fill=color + (int(255 * alpha),))
+        # 应用透明度
+        alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
+        svg_array = np.array(svg_rgba)
+        svg_array[:, :, 3] = (svg_array[:, :, 3] * alpha).astype(np.uint8)
+        svg_rgba = Image.fromarray(svg_array)
         
-        # 旋转字符以匹配弧线方向
-        char_img = char_img.rotate(-angle, expand=True, fillcolor=(255, 255, 255, 0))
+        overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
+        overlay_draw = ImageDraw.Draw(overlay)
         
-        # 计算粘贴位置
-        paste_x = int(char_x - char_img.width // 2)
-        paste_y = int(char_y - char_img.height // 2)
+        # 生成随机ID
+        random_id = f"ID:{random.randint(100000, 999999)}"
+        font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.025, 0.04)))
+        font = get_font(font_size)
+        id_w, id_h = get_text_bbox(overlay_draw, random_id, font)
         
-        # 确保在边界内
-        if 0 <= paste_x < w and 0 <= paste_y < h:
-            overlay.paste(char_img, (paste_x, paste_y), char_img)
-    
-    return overlay
-
-def combined_styles(w, h, enabled_single_styles):
-    """风格14: 组合多个风格 - 随机选择2-3个风格并组合"""
-    if len(enabled_single_styles) < 2:
-        # 如果可用风格太少，降级到单一风格
-        return random.choice(enabled_single_styles)(w, h)
-    
-    # 随机选择2-3个风格
-    num_styles = random.randint(2, min(3, len(enabled_single_styles)))
-    selected_styles = random.sample(enabled_single_styles, num_styles)
-    
-    overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
-    
-    # 顺序应用风格
-    for style_func in selected_styles:
-        try:
-            style_overlay = style_func(w, h)
-            if style_overlay is not None:
-                overlay = Image.alpha_composite(overlay, style_overlay)
-        except Exception as e:
-            # 某个风格失败时继续
-            continue
-    
-    return overlay
+        # 角落位置
+        corner = random.choice(['tl', 'tr', 'bl', 'br'])
+        margin = max(8, int(w * 0.01))
+        
+        if corner == 'tl':
+            logo_pos = (margin, margin)
+            text_pos = (margin + logo_w + 5, margin + (logo_h - id_h) // 2)
+        elif corner == 'tr':
+            logo_pos = (max(0, w - logo_w - margin), margin)
+            text_pos = (max(0, w - logo_w - margin - id_w - 5), margin + (logo_h - id_h) // 2)
+        elif corner == 'bl':
+            logo_pos = (margin, max(0, h - logo_h - margin))
+            text_pos = (margin + logo_w + 5, max(0, h - logo_h - margin) + (logo_h - id_h) // 2)
+        else:  # br
+            logo_pos = (max(0, w - logo_w - margin), max(0, h - logo_h - margin))
+            text_pos = (max(0, w - logo_w - margin - id_w - 5), max(0, h - logo_h - margin) + (logo_h - id_h) // 2)
+        
+        # 粘贴SVG logo
+        overlay.paste(svg_rgba, logo_pos, svg_rgba)
+        
+        # 添加ID文本
+        color = select_contrasting_color(BRIGHTNESS_THRESHOLD)
+        overlay = draw_text_with_alpha(overlay, text_pos, random_id, font, color, alpha)
+        
+        return overlay
+        
+    except Exception as e:
+        # 降级到迷你社交角落
+        return mini_social_corner_logo(w, h)
 
 # ============================================================================
 # 主要处理函数
@@ -1322,6 +1131,12 @@ def generate_watermark_variant(image_path, output_index, max_retries=3):
         style_functions.append(('corner_website_logo', lambda: corner_website_logo(w, h)))
     if 'mini_social_corner_logo' in ENABLED_STYLES:
         style_functions.append(('mini_social_corner_logo', lambda: mini_social_corner_logo(w, h)))
+    if 'elecfans_logo_svg_corner' in ENABLED_STYLES:
+        style_functions.append(('elecfans_logo_svg_corner', lambda: elecfans_logo_svg_corner(w, h)))
+    if 'elecfans_web_svg_center' in ENABLED_STYLES:
+        style_functions.append(('elecfans_web_svg_center', lambda: elecfans_web_svg_center(w, h)))
+    if 'wechat_svg_corner_id' in ENABLED_STYLES:
+        style_functions.append(('wechat_svg_corner_id', lambda: wechat_svg_corner_id(w, h)))
     
     if not style_functions:
         print(f"警告: 没有启用的风格")
@@ -1338,21 +1153,8 @@ def generate_watermark_variant(image_path, output_index, max_retries=3):
                 single_funcs = [f[1] for f in style_functions if f[0] != 'combined_styles']
                 overlay = combined_styles(w, h, single_funcs)
             else:
-                # 选择单个风格 - 支持加权选择
-                if 'corner_website_logo' in ENABLED_STYLES and random.random() < CORNER_WEBSITE_LOGO_WEIGHT:
-                    # 直接选择角落网站LOGO风格
-                    style_name = 'corner_website_logo'
-                    style_func = lambda: corner_website_logo(w, h)
-                else:
-                    # 从其他风格中随机选择
-                    other_styles = [(name, func) for name, func in style_functions if name != 'corner_website_logo']
-                    if other_styles:
-                        style_name, style_func = random.choice(other_styles)
-                    else:
-                        # 如果只有角落网站LOGO风格可用
-                        style_name = 'corner_website_logo'
-                        style_func = lambda: corner_website_logo(w, h)
-                
+                # 选择单个风格
+                style_name, style_func = random.choice(style_functions)
                 overlay = style_func()
             
             if overlay is None:
@@ -1431,14 +1233,13 @@ def main():
     ensure_dirs()
     
     print("=" * 70)
-    print("增强的水印生成脚本 - 可见性强化版 (16种风格)")
+    print("增强的水印生成脚本 - 可见性强化版 (19种风格)")
     print("=" * 70)
     print(f"输入目录: {INPUT_DIR}")
     print(f"输出目录: {OUTPUT_DIR}")
     print(f"掩码目录: {MASK_DIR}")
     print(f"每张图像变体数: {NUM_VARIANTS_PER_IMAGE}")
     print(f"组合风格概率: {COMBINED_STYLE_PROBABILITY * 100:.0f}%")
-    print(f"角落网站LOGO权重: {CORNER_WEBSITE_LOGO_WEIGHT * 100:.0f}%")
     print()
     print("可见性约束 (HARD CONSTRAINTS):")
     print(f"  ✓ 最小透明度 (alpha): {MIN_ALPHA:.0%}")

@@ -1,0 +1,39 @@
+<!--?xml version="1.0" encoding="UTF-8"?-->
+<svg width="500" height="160" viewBox="0 0 500 160" xmlns="http://www.w3.org/2000/svg" version="1.1">
+
+  <!-- 透明背景 -->
+  <rect x="0" y="0" width="500" height="160" fill="none"></rect>
+
+  <!-- 整体水印分组 -->
+  <g id="elecfans_watermark" fill="white" stroke="none">
+
+    <!-- 文本块，居中对齐（x=250 为画布中心） -->
+    <g id="text_block">
+
+      <!-- 阴影层 -->
+      <g fill="black" fill-opacity="0.4">
+        <!-- 中文艺术字（源水印风格：偏行书/艺术体） -->
+        <text x="250" y="70" font-size="40" text-anchor="middle" font-family="STXingkai, 'KaiTi_GB2312', KaiTi, 'FZShuTi', 'Noto Sans CJK SC', SimHei, sans-serif" font-style="italic">
+          电子发烧友网
+        </text>
+
+        <!-- 英文网址 -->
+        <text x="250" y="105" font-size="22" text-anchor="middle" font-family="Arial, 'Noto Sans', sans-serif">
+          www.elecfans.com
+        </text>
+      </g>
+
+      <!-- 主体文字（白色，略向左上偏移，形成立体感） -->
+      <g transform="translate(-1,-1)">
+        <text x="250" y="70" font-size="40" text-anchor="middle" font-family="STXingkai, 'KaiTi_GB2312', KaiTi, 'FZShuTi', 'Noto Sans CJK SC', SimHei, sans-serif" font-style="italic">
+          电子发烧友网
+        </text>
+
+        <text x="250" y="105" font-size="22" text-anchor="middle" font-family="Arial, 'Noto Sans', sans-serif">
+          www.elecfans.com
+        </text>
+      </g>
+
+    </g>
+  </g>
+</svg>

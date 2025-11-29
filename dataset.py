@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+from PIL import Image
 
 class WatermarkDataset(Dataset):
     """水印去除数据集"""
@@ -29,6 +30,32 @@ class WatermarkDataset(Dataset):
         # 获取所有图像对
         self.image_pairs = self._get_image_pairs()
     
+    def _read_image(self, image_path):
+        """读取图像，支持多种格式"""
+        try:
+            # 首先尝试用cv2读取
+            img = cv2.imread(image_path)
+            if img is not None and img.size > 0:
+                return img
+            
+            # 如果cv2失败，尝试用PIL读取（用于GIF等格式）
+            pil_img = Image.open(image_path)
+            # 转换为RGB模式（如果是RGBA或P模式）
+            if pil_img.mode in ('RGBA', 'LA', 'P'):
+                pil_img = pil_img.convert('RGB')
+            elif pil_img.mode == 'L':
+                pil_img = pil_img.convert('RGB')
+            
+            # 转换为numpy数组
+            img = np.array(pil_img)
+            # PIL读取的是RGB，转换为BGR以保持一致性
+            if len(img.shape) == 3 and img.shape[2] == 3:
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            
+            return img
+        except Exception as e:
+            return None
+    
     def _get_image_pairs(self):
         """获取图像对列表"""
         pairs = []
@@ -36,10 +63,11 @@ class WatermarkDataset(Dataset):
         
         # 首先收集所有源干净图像（从source_dir中）
         for clean_name in os.listdir(self.source_dir):
-            if clean_name.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp')):
+            if clean_name.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif')):
                 clean_path = os.path.join(self.source_dir, clean_name)
-                # 检查图像是否可以读取
-                if cv2.imread(clean_path) is not None:
+                # 检查图像是否可以读取（只在初始化时检查一次）
+                img = self._read_image(clean_path)
+                if img is not None and img.size > 0:
                     base_name = os.path.splitext(clean_name)[0]
                     clean_images[base_name] = clean_name
                 else:
@@ -47,16 +75,20 @@ class WatermarkDataset(Dataset):
         
         # 然后为每个水印图像找到对应的干净图像
         for watermarked_name in os.listdir(self.watermarked_dir):
-            if watermarked_name.lower().endswith(('.jpg', '.jpeg', '.png')):
+            if watermarked_name.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')):
                 watermarked_path = os.path.join(self.watermarked_dir, watermarked_name)
-                # 检查水印图像是否可以读取
-                if cv2.imread(watermarked_path) is None:
+                # 检查水印图像是否可以读取（只在初始化时检查一次）
+                img = self._read_image(watermarked_path)
+                if img is None or img.size == 0:
                     print(f"跳过无法读取的水印图像: {watermarked_name}")
                     continue
                     
-                # 水印图像命名规则: "{base_name}_wm_{index}.jpg"
+                # 水印图像命名规则: "{base_name}_wm_{index}.jpg" 或 "{base_name}_svg_wm_{index}.jpg"
                 # 例如: "image_001_wm_002.jpg" -> "image_001"
-                base_name = watermarked_name.rsplit('_wm_', 1)[0]
+                if '_svg_wm_' in watermarked_name:
+                    base_name = watermarked_name.rsplit('_svg_wm_', 1)[0]
+                else:
+                    base_name = watermarked_name.rsplit('_wm_', 1)[0]
                 
                 if base_name in clean_images:
                     pairs.append((clean_images[base_name], watermarked_name))
@@ -73,10 +105,39 @@ class WatermarkDataset(Dataset):
         clean_path = os.path.join(self.source_dir, clean_name)
         watermarked_path = os.path.join(self.watermarked_dir, watermarked_name)
         
-        clean_img = cv2.imread(clean_path)
-        watermarked_img = cv2.imread(watermarked_path)
+        clean_img = self._read_image(clean_path)
+        watermarked_img = self._read_image(watermarked_path)
         
-        # BGR to RGB
+        # 检查图像是否成功读取
+        if clean_img is None or clean_img.size == 0:
+            raise RuntimeError(f"无法读取干净图像: {clean_path}")
+        if watermarked_img is None or watermarked_img.size == 0:
+            raise RuntimeError(f"无法读取水印图像: {watermarked_path}")
+        
+        # 如果图像是灰度图，转换为RGB
+        if len(clean_img.shape) == 2:
+            clean_img = cv2.cvtColor(clean_img, cv2.COLOR_GRAY2RGB)
+        elif clean_img.shape[2] == 1:
+            clean_img = cv2.cvtColor(clean_img, cv2.COLOR_GRAY2RGB)
+        
+        if len(watermarked_img.shape) == 2:
+            watermarked_img = cv2.cvtColor(watermarked_img, cv2.COLOR_GRAY2RGB)
+        elif watermarked_img.shape[2] == 1:
+            watermarked_img = cv2.cvtColor(watermarked_img, cv2.COLOR_GRAY2RGB)
+        
+        # 确保图像是RGB格式
+        if clean_img.shape[2] == 4:  # RGBA
+            clean_img = cv2.cvtColor(clean_img, cv2.COLOR_RGBA2RGB)
+        elif clean_img.shape[2] == 3 and clean_img.dtype != np.uint8:
+            # 如果不是uint8，归一化到0-255
+            clean_img = (clean_img * 255).astype(np.uint8)
+        
+        if watermarked_img.shape[2] == 4:  # RGBA
+            watermarked_img = cv2.cvtColor(watermarked_img, cv2.COLOR_RGBA2RGB)
+        elif watermarked_img.shape[2] == 3 and watermarked_img.dtype != np.uint8:
+            watermarked_img = (watermarked_img * 255).astype(np.uint8)
+        
+        # BGR to RGB (所有图像现在都是BGR格式，需要转换为RGB)
         clean_img = cv2.cvtColor(clean_img, cv2.COLOR_BGR2RGB)
         watermarked_img = cv2.cvtColor(watermarked_img, cv2.COLOR_BGR2RGB)
         
@@ -182,6 +243,7 @@ def create_dataloaders(config):
 
 if __name__ == "__main__":
     # 测试数据加载
+    import cv2  # 重新导入cv2确保在测试中可用
     from config import Config
     config = Config()
     

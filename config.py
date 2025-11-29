@@ -26,8 +26,8 @@ class Config:
     
     # 生成的水印数据路径
     # 由 scripts/generate_watermarks_with_masks.py 生成
-    GENERATED_WATERMARK_DIR = os.path.join(PROJECT_ROOT, "watermark_demowen")
-    GENERATED_MASK_DIR = os.path.join(PROJECT_ROOT, "watermark_demowen_masks")
+    GENERATED_WATERMARK_DIR = os.path.join(PROJECT_ROOT, "merged_watermark_images")
+    GENERATED_MASK_DIR = os.path.join(PROJECT_ROOT, "merged_watermark_masks")
     
     # 训练数据配置
     USE_NEW_GENERATED_DATA = True  # 使用新生成的数据集
@@ -73,7 +73,7 @@ class Config:
     # ========================================================================
     
     BATCH_SIZE = 16           # 批次大小（GPU内存不足时可减小到4或8）
-    NUM_EPOCHS = 5           # 训练轮数（建议 30-50）
+    NUM_EPOCHS = 10           # 训练轮数（建议 30-50）
     LEARNING_RATE = 1e-4      # 初始学习率
     NUM_WORKERS = 4           # 数据加载线程数
     

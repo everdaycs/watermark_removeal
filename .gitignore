@@ -51,3 +51,8 @@ test_*.png
 !logs/.gitkeep
 !results/.gitkeep
 !data/.gitkeep
+
+# 本地合成输出（不纳入版本控制）
+merged_watermark_images/
+merged_watermark_masks/
+preview/
