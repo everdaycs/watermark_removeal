@@ -56,21 +56,22 @@ ENABLE_VISIBILITY_VALIDATION = True
 # ============================================================================
 # 配置参数
 # ============================================================================
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 NUM_VARIANTS_PER_IMAGE = 32
 INPUT_DIR = "/home/kaga/Desktop/watermaker remover/20251127_no_watermark_demo"
-OUTPUT_DIR = "./merged_watermark_images"  # 修改：输出到合并目录
-MASK_DIR = "./merged_watermark_masks"     # 修改：输出到合并目录
-LOGO_PATH = "./logo.png"
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_images")  # 修改：输出到合并目录
+MASK_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_masks")     # 修改：输出到合并目录
+LOGO_PATH = os.path.join(SCRIPT_DIR, "logo.png")
 
 TEXT_CANDIDATES = ["DEMO", "SAMPLE", "Preview", "Copyright", "DemoWen", 
                    "NoRepost", "2025", "WATERMARK", "Test", "Draft",
                    "演示", "示例", "测试", "水印", "版权", "禁止转载", "保留所有权利"]
 
 # SVG 资源配置
-ELECFANS_LOGO_SVG = "./logos/elecfans-logo.svg"
-ELECFANS_WEB_SVG = "./logos/elecfans-web.svg"
-WECHAT_SVG = "./logos/WeChat.svg"
+ELECFANS_LOGO_SVG = os.path.join(SCRIPT_DIR, "logos/elecfans-logo.svg")
+ELECFANS_WEB_SVG = os.path.join(SCRIPT_DIR, "logos/elecfans-web.svg")
+WECHAT_SVG = os.path.join(SCRIPT_DIR, "logos/WeChat.svg")
 
 # SVG 渲染缓存（避免重复处理相同的SVG）
 _SVG_CACHE = {}

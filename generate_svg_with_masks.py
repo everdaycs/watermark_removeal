@@ -24,6 +24,12 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import numpy as np
 
 # ============================================================================
+# 项目路径配置
+# ============================================================================
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+# ============================================================================
 # 可见性约束配置
 # ============================================================================
 
@@ -44,16 +50,17 @@ ENABLE_VISIBILITY_VALIDATION = True
 # ============================================================================
 # 配置参数
 # ============================================================================
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 NUM_VARIANTS_PER_IMAGE = 16
 INPUT_DIR = "/home/kaga/Desktop/watermaker remover/20251127_no_watermark_demo"
-OUTPUT_DIR = "./merged_watermark_images"
-MASK_DIR = "./merged_watermark_masks"
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_images")
+MASK_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_masks")
 
 # SVG 资源配置
-ELECFANS_LOGO_SVG = "./logos/elecfans-logo.svg"
-ELECFANS_WEB_SVG = "./logos/elecfans-web.svg"
-WECHAT_SVG = "./logos/WeChat.svg"
+ELECFANS_LOGO_SVG = os.path.join(SCRIPT_DIR, "logos/elecfans-logo.svg")
+ELECFANS_WEB_SVG = os.path.join(SCRIPT_DIR, "logos/elecfans-web.svg")
+WECHAT_SVG = os.path.join(SCRIPT_DIR, "logos/WeChat.svg")
 
 # 微信ID候选列表
 WECHAT_ID_CANDIDATES = [
