@@ -146,7 +146,7 @@ def main():
     config = Config()
 
     # 硬编码路径（根据用户需求）
-    INPUT_DIR = "/media/kaga/本地磁盘/20251121_watermark_demo/data_trans/transparent or background wartermark/"
+    INPUT_DIR = "/home/kaga/Desktop/watermaker remover/20251201/transparent_watermark_20251201"
     OUTPUT_DIR = os.path.join(config.PROJECT_ROOT, "results")
     CHECKPOINT_PATH = os.path.join(config.PROJECT_ROOT, "checkpoints", "unet_watermark_removal_best.pth")
 

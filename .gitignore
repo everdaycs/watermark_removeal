@@ -28,6 +28,7 @@ data/*/
 
 # 模型和日志
 checkpoints/*.pth
+checkpoints/*.pt
 logs/
 results/
 *.log
@@ -56,3 +57,43 @@ test_*.png
 merged_watermark_images/
 merged_watermark_masks/
 preview/
+
+# PyTorch 相关
+*.pth.tar
+model_*.pth
+checkpoint_*.pth
+runs/
+tensorboard_logs/
+
+# CUDA
+*.pkl
+*.pickle
+.cache/
+*.nvcc
+
+# 大型数据集
+*.zip
+*.tar.gz
+*.rar
+training_data/
+validation_data/
+test_data/
+
+# 推理结果
+results_tiled/
+batch_results/
+inference_output/
+
+# 配置文件（可能包含敏感信息）
+config/local_config.py
+config/private_config.py
+*.env
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

@@ -59,9 +59,9 @@ ENABLE_VISIBILITY_VALIDATION = True
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 NUM_VARIANTS_PER_IMAGE = 32
-INPUT_DIR = "/home/kaga/Desktop/watermaker remover/20251127_no_watermark_demo"
-OUTPUT_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_images")  # 修改：输出到合并目录
-MASK_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_masks")     # 修改：输出到合并目录
+INPUT_DIR = "/home/kaga/Desktop/watermaker remover/20251201/no_watermark_20251201"
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_images")  
+MASK_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_masks")     
 LOGO_PATH = os.path.join(SCRIPT_DIR, "logo.png")
 
 TEXT_CANDIDATES = ["DEMO", "SAMPLE", "Preview", "Copyright", "DemoWen", 

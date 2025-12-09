@@ -24,12 +24,6 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import numpy as np
 
 # ============================================================================
-# 项目路径配置
-# ============================================================================
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-
-# ============================================================================
 # 可见性约束配置
 # ============================================================================
 
@@ -86,7 +80,7 @@ ENABLED_SVG_STYLES = [
     'elecfans_logo_svg_corner',     # ElecFans LOGO SVG角落
     'elecfans_web_svg_center',      # ElecFans Web SVG居中
     'wechat_svg_corner_id',         # 微信SVG角落带ID
-    'elecfans_logo_svg_center',     # ElecFans LOGO SVG居中
+    # 'elecfans_logo_svg_center',   # 禁用：ElecFans LOGO SVG居中
     'elecfans_web_svg_corner',      # ElecFans Web SVG角落
     # 'wechat_svg_center',          # 禁用：真实微信水印通常是角落小图标
     'combined_svg_styles',          # 组合SVG风格
@@ -101,11 +95,15 @@ ELECFANS_WEB_CORNER_MAX_WIDTH = 0.25   # 25% of image width
 # opacity range (real watermark is quite visible but not 100% solid)
 # Increase corner alpha to make corner watermarks clearer for training
 ELECFANS_WEB_CORNER_ALPHA_MIN = 0.75
-ELECFANS_WEB_CORNER_ALPHA_MAX = 0.95
+ELECFANS_WEB_CORNER_ALPHA_MAX = 0.85
 
 # ElecFans logo corner (separate tuning from web horizontal logo)
 ELECFANS_LOGO_CORNER_ALPHA_MIN = 0.75
-ELECFANS_LOGO_CORNER_ALPHA_MAX = 0.95
+ELECFANS_LOGO_CORNER_ALPHA_MAX = 0.90
+
+# ElecFans Shadow Configuration
+ELECFANS_SHADOW_OFFSET_RATIO = 0.015  # Shadow offset as percentage of width (1.5%)
+ELECFANS_SHADOW_MIN_OFFSET = 1        # Minimum shadow offset in pixels
 
 # optional blur to imitate screenshot / compression
 ELECFANS_WEB_CORNER_BLUR_PROB = 0.4    # 40% chance to blur
@@ -313,7 +311,7 @@ def validate_watermark_visibility(overlay_array, w, h):
 # SVG 渲染辅助函数
 # ============================================================================
 
-def load_svg_as_rgba(svg_path: str, target_width: int, target_height: int) -> Image.Image:
+def load_svg_as_rgba(svg_path: str, target_width: int = None, target_height: int = None) -> Image.Image:
     """
     将 SVG 文件渲染为 PIL RGBA 图像
 
@@ -322,8 +320,8 @@ def load_svg_as_rgba(svg_path: str, target_width: int, target_height: int) -> Im
 
     Args:
         svg_path (str): SVG 文件路径
-        target_width (int): 目标宽度（像素）
-        target_height (int): 目标高度（像素）
+        target_width (int): 目标宽度（像素），可选
+        target_height (int): 目标高度（像素），可选
 
     Returns:
         PIL.Image: RGBA 图像，或 None 如果加载失败
@@ -343,12 +341,14 @@ def load_svg_as_rgba(svg_path: str, target_width: int, target_height: int) -> Im
 
         # 使用 cairosvg 将 SVG 转换为 PNG 字节
         png_bytes = io.BytesIO()
-        cairosvg.svg2png(
-            url=svg_path,
-            output_width=target_width,
-            output_height=target_height,
-            write_to=png_bytes
-        )
+        
+        kwargs = {'url': svg_path, 'write_to': png_bytes}
+        if target_width is not None:
+            kwargs['output_width'] = target_width
+        if target_height is not None:
+            kwargs['output_height'] = target_height
+            
+        cairosvg.svg2png(**kwargs)
         png_bytes.seek(0)
 
         # 加载 PNG 为 RGBA 图像
@@ -373,15 +373,47 @@ def elecfans_logo_svg_corner(w, h):
         return None
 
     try:
-        svg_rgba = load_svg_as_rgba(ELECFANS_LOGO_SVG, int(w * 0.12), int(h * 0.12))
+        # 1. Determine exact target size first to avoid upscaling blur
+        logo_w = int(w * random.uniform(0.10, 0.40))
+        
+        # Render SVG at exact width (let height auto-scale)
+        svg_rgba = load_svg_as_rgba(ELECFANS_LOGO_SVG, target_width=logo_w)
         if svg_rgba is None:
             return None
+            
+        logo_h = svg_rgba.height
 
-        # 缩放SVG
-        logo_w = int(w * random.uniform(0.08, 0.15))
-        ratio = logo_w / svg_rgba.width if svg_rgba.width > 0 else 1
-        logo_h = int(svg_rgba.height * ratio)
-        svg_rgba = svg_rgba.resize((logo_w, logo_h), Image.Resampling.LANCZOS)
+        # Convert to White Logo with Black Shadow
+        try:
+            # 1. Create Shadow (Black)
+            shadow_offset = max(ELECFANS_SHADOW_MIN_OFFSET, int(logo_w * ELECFANS_SHADOW_OFFSET_RATIO))
+            shadow_img = svg_rgba.copy()
+            shadow_arr = np.array(shadow_img)
+            # Set RGB to Black, keep Alpha
+            shadow_arr[:, :, 0:3] = 0 
+            shadow_img = Image.fromarray(shadow_arr)
+            
+            # 2. Create Foreground (White)
+            fg_img = svg_rgba.copy()
+            fg_arr = np.array(fg_img)
+            # Set RGB to White, keep Alpha
+            fg_arr[:, :, 0:3] = 255
+            fg_img = Image.fromarray(fg_arr)
+            
+            # 3. Combine
+            new_w = logo_w + shadow_offset
+            new_h = logo_h + shadow_offset
+            combined = Image.new('RGBA', (new_w, new_h), (0,0,0,0))
+            
+            # Paste shadow first
+            combined.paste(shadow_img, (shadow_offset, shadow_offset), shadow_img)
+            # Paste foreground
+            combined.paste(fg_img, (0, 0), fg_img)
+            
+            svg_rgba = combined
+        except Exception as e:
+            print(f"Error creating shadow/outline: {e}")
+            pass
 
         # 应用透明度（角落logo使用更高的不透明度以保证可见性）
         alpha = random.uniform(ELECFANS_LOGO_CORNER_ALPHA_MIN, ELECFANS_LOGO_CORNER_ALPHA_MAX)
@@ -392,18 +424,9 @@ def elecfans_logo_svg_corner(w, h):
 
         overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
 
-        # 角落位置
-        corner = random.choice(['tl', 'tr', 'bl', 'br'])
+        # 角落位置 - 只放在右下角
         margin = max(10, int(w * 0.015))
-
-        if corner == 'tl':
-            pos = (margin, margin)
-        elif corner == 'tr':
-            pos = (max(0, w - logo_w - margin), margin)
-        elif corner == 'bl':
-            pos = (margin, max(0, h - logo_h - margin))
-        else:  # br
-            pos = (max(0, w - logo_w - margin), max(0, h - logo_h - margin))
+        pos = (max(0, w - logo_w - margin), max(0, h - logo_h - margin))
 
         overlay.paste(svg_rgba, pos, svg_rgba)
         return overlay
@@ -462,18 +485,41 @@ def wechat_svg_corner_id(w, h):
         if svg_rgba is None:
             return None
 
-        # 将图标改为纯黑（保留 alpha），提高在各种背景下的可见性
+        # Convert to White Logo with Black Shadow
         try:
-            svg_arr = np.array(svg_rgba)
-            alpha_mask_icon = svg_arr[:, :, 3] > 0
-            # 将所有非透明像素设为黑色
-            svg_arr[alpha_mask_icon, 0] = 0
-            svg_arr[alpha_mask_icon, 1] = 0
-            svg_arr[alpha_mask_icon, 2] = 0
-            svg_rgba = Image.fromarray(svg_arr, 'RGBA')
-        except Exception:
-            # 如果数组转换失败，则忽略该步骤，继续使用原始图标
+            # 1. Create Shadow (Black)
+            shadow_offset = max(ELECFANS_SHADOW_MIN_OFFSET, int(icon_width * ELECFANS_SHADOW_OFFSET_RATIO))
+            shadow_img = svg_rgba.copy()
+            shadow_arr = np.array(shadow_img)
+            # Set RGB to Black, keep Alpha
+            shadow_arr[:, :, 0:3] = 0 
+            shadow_img = Image.fromarray(shadow_arr)
+            
+            # 2. Create Foreground (White)
+            fg_img = svg_rgba.copy()
+            fg_arr = np.array(fg_img)
+            # Set RGB to White, keep Alpha
+            fg_arr[:, :, 0:3] = 255
+            fg_img = Image.fromarray(fg_arr)
+            
+            # 3. Combine
+            new_w = icon_width + shadow_offset
+            new_h = icon_height + shadow_offset
+            combined = Image.new('RGBA', (new_w, new_h), (0,0,0,0))
+            
+            # Paste shadow first
+            combined.paste(shadow_img, (shadow_offset, shadow_offset), shadow_img)
+            # Paste foreground
+            combined.paste(fg_img, (0, 0), fg_img)
+            
+            svg_rgba = combined
+        except Exception as e:
+            print(f"Error creating shadow/outline for WeChat: {e}")
             pass
+
+        # Update icon dimensions to include shadow
+        icon_width = svg_rgba.width
+        icon_height = svg_rgba.height
 
         # 计算字体尺寸：约0.8倍图标高度，至少12px（更大以提高可读性）
         font_size = max(12, int(icon_height * 0.8))
@@ -500,13 +546,41 @@ def wechat_svg_corner_id(w, h):
             font_size = max(12, int(font_size * scale_factor))
             gap = max(4, int(gap * scale_factor))
 
-            # 重新加载图标和字体
-            svg_rgba = load_svg_as_rgba(WECHAT_SVG, icon_width, icon_height)
-            if svg_rgba is None:
+            # 重新加载图标并应用阴影
+            temp_svg = load_svg_as_rgba(WECHAT_SVG, icon_width, icon_height)
+            if temp_svg is None:
                 return None
+                
+            # Reapply shadow effect after scaling
+            try:
+                temp_shadow_offset = max(ELECFANS_SHADOW_MIN_OFFSET, int(icon_width * ELECFANS_SHADOW_OFFSET_RATIO))
+                temp_shadow_img = temp_svg.copy()
+                temp_shadow_arr = np.array(temp_shadow_img)
+                temp_shadow_arr[:, :, 0:3] = 0 
+                temp_shadow_img = Image.fromarray(temp_shadow_arr)
+                
+                temp_fg_img = temp_svg.copy()
+                temp_fg_arr = np.array(temp_fg_img)
+                temp_fg_arr[:, :, 0:3] = 255
+                temp_fg_img = Image.fromarray(temp_fg_arr)
+                
+                temp_new_w = icon_width + temp_shadow_offset
+                temp_new_h = icon_height + temp_shadow_offset
+                temp_combined = Image.new('RGBA', (temp_new_w, temp_new_h), (0,0,0,0))
+                temp_combined.paste(temp_shadow_img, (temp_shadow_offset, temp_shadow_offset), temp_shadow_img)
+                temp_combined.paste(temp_fg_img, (0, 0), temp_fg_img)
+                svg_rgba = temp_combined
+            except Exception as e:
+                print(f"Error reapplying shadow after scaling: {e}")
+                svg_rgba = temp_svg
+                
             font = get_font(font_size)
             if font is None:
                 return None
+
+            # Update dimensions after scaling
+            icon_width = svg_rgba.width
+            icon_height = svg_rgba.height
 
             # 重新测量文本
             text_w, text_h = get_text_bbox(ImageDraw.Draw(Image.new('RGBA', (1, 1))), wechat_id, font)
@@ -614,14 +688,44 @@ def elecfans_web_svg_corner(w, h):
                 ELECFANS_WEB_CORNER_MAX_WIDTH
             )
         )
-        svg_rgba = load_svg_as_rgba(ELECFANS_WEB_SVG, target_w, target_w)
+        # Render at exact width, let height be auto-calculated by cairosvg
+        svg_rgba = load_svg_as_rgba(ELECFANS_WEB_SVG, target_width=target_w)
         if svg_rgba is None:
             return None
 
-        # resize with correct aspect
-        ratio = target_w / svg_rgba.width
-        target_h = int(svg_rgba.height * ratio)
-        svg_rgba = svg_rgba.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        target_h = svg_rgba.height
+
+        # Convert to White Logo with Black Shadow
+        try:
+            # 1. Create Shadow (Black)
+            shadow_offset = max(ELECFANS_SHADOW_MIN_OFFSET, int(target_w * ELECFANS_SHADOW_OFFSET_RATIO))
+            shadow_img = svg_rgba.copy()
+            shadow_arr = np.array(shadow_img)
+            # Set RGB to Black, keep Alpha
+            shadow_arr[:, :, 0:3] = 0 
+            shadow_img = Image.fromarray(shadow_arr)
+            
+            # 2. Create Foreground (White)
+            fg_img = svg_rgba.copy()
+            fg_arr = np.array(fg_img)
+            # Set RGB to White, keep Alpha
+            fg_arr[:, :, 0:3] = 255
+            fg_img = Image.fromarray(fg_arr)
+            
+            # 3. Combine
+            new_w = target_w + shadow_offset
+            new_h = target_h + shadow_offset
+            combined = Image.new('RGBA', (new_w, new_h), (0,0,0,0))
+            
+            # Paste shadow first
+            combined.paste(shadow_img, (shadow_offset, shadow_offset), shadow_img)
+            # Paste foreground
+            combined.paste(fg_img, (0, 0), fg_img)
+            
+            svg_rgba = combined
+        except Exception as e:
+            print(f"Error creating shadow/outline: {e}")
+            pass
 
         # apply alpha in dedicated range
         alpha = random.uniform(ELECFANS_WEB_CORNER_ALPHA_MIN,
@@ -631,11 +735,11 @@ def elecfans_web_svg_corner(w, h):
         svg_array[mask, 3] = (svg_array[mask, 3] * alpha).astype(np.uint8)
         svg_rgba = Image.fromarray(svg_array, 'RGBA')
 
-        # optional slight blur
-        if random.random() < ELECFANS_WEB_CORNER_BLUR_PROB:
-            r_min, r_max = ELECFANS_WEB_CORNER_BLUR_RADIUS_RANGE
-            radius = random.uniform(r_min, r_max)
-            svg_rgba = svg_rgba.filter(ImageFilter.GaussianBlur(radius))
+        # Removed blur to ensure crisp vector-like quality
+        # if random.random() < ELECFANS_WEB_CORNER_BLUR_PROB:
+        #     r_min, r_max = ELECFANS_WEB_CORNER_BLUR_RADIUS_RANGE
+        #     radius = random.uniform(r_min, r_max)
+        #     svg_rgba = svg_rgba.filter(ImageFilter.GaussianBlur(radius))
 
         overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
 
