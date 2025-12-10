@@ -64,9 +64,97 @@ OUTPUT_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_images")
 MASK_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_masks")     
 LOGO_PATH = os.path.join(SCRIPT_DIR, "logo.png")
 
-TEXT_CANDIDATES = ["DEMO", "SAMPLE", "Preview", "Copyright", "DemoWen", 
-                   "NoRepost", "2025", "WATERMARK", "Test", "Draft",
-                   "演示", "示例", "测试", "水印", "版权", "禁止转载", "保留所有权利"]
+TEXT_CANDIDATES = [
+    "DEMO",
+    "SAMPLE",
+    "Preview",
+    "Copyright",
+    "DemoWen",
+    "NoRepost",
+    "2025",
+    "WATERMARK",
+    "Test",
+    "Draft",
+    "演示",
+    "示例",
+    "测试",
+    "水印",
+    "版权",
+    "禁止转载",
+    "保留所有权利",
+    "www.elecfans.com",
+    "ElecFans.com",
+    "ElecFans",
+    "TechWatermark",
+    "WatermarkMaster",
+    "电子发烧友",
+
+    # 新增英文通用水印
+    "SAMPLE IMAGE",
+    "SAMPLE PHOTO",
+    "PREVIEW ONLY",
+    "FOR REVIEW",
+    "FOR DEMO USE",
+    "DO NOT COPY",
+    "DO NOT REPOST",
+    "DO NOT DISTRIBUTE",
+    "ALL RIGHTS RESERVED",
+    "CONFIDENTIAL",
+    "INTERNAL USE ONLY",
+    "UNAUTHORIZED USE PROHIBITED",
+    "SCREENING COPY",
+    "LOW RES PREVIEW",
+    "BETA VERSION",
+    "DRAFT ONLY",
+    "TEMP WATERMARK",
+    "PLACEHOLDER",
+    "UNEDITED",
+    "PROOF",
+    "CLIENT PREVIEW",
+    "WORK IN PROGRESS",
+    "SAMPLE DATA",
+    "TRAINING ONLY",
+
+    # 年份/版本
+    "2023",
+    "2024",
+    "Ver.1.0",
+    "Ver.2.0",
+    "REV-A",
+    "REV-B",
+
+    # 新增中文常见水印
+    "仅供预览",
+    "仅供测试",
+    "仅供内部使用",
+    "仅供学习交流",
+    "严禁转载",
+    "严禁商用",
+    "非成品",
+    "未最终定稿",
+    "工作稿",
+    "样张",
+    "样图",
+    "草稿",
+    "预览图",
+    "低清预览",
+    "训练数据",
+    "示意图",
+    "示意用",
+    "内部资料",
+    "机密文件",
+    "请勿外传",
+
+    # 域名/品牌风格占位
+    "www.example.com",
+    "demo.example.com",
+    "YourBrand",
+    "YourStudio",
+    "SampleStudio",
+    "PhotoLab",
+    "TechDemo",
+    "AIWatermark"
+]
 
 # SVG 资源配置
 ELECFANS_LOGO_SVG = os.path.join(SCRIPT_DIR, "logos/elecfans-logo.svg")
@@ -103,7 +191,8 @@ ENABLED_STYLES = [
     'elecfans_logo_svg_corner',   # 16
     'elecfans_web_svg_center',    # 17
     'wechat_svg_corner_id',       # 18
-    'combined_styles',         # 19
+    'red_transparent_text',       # 19 红色半透明文本水印
+    'combined_styles',         # 20
 ]
 
 COMBINED_STYLE_PROBABILITY = 0.3  # 使用组合风格的概率
@@ -1081,6 +1170,66 @@ def wechat_svg_corner_id(w, h):
         # 降级到迷你社交角落
         return mini_social_corner_logo(w, h)
 
+def red_transparent_text(w, h):
+    """风格19: 红色半透明文本水印 - 使用TEXT_CANDIDATES内容"""
+    text = random.choice(TEXT_CANDIDATES)
+    # 最小尺寸: 6-12% 的图像高度
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.06, 0.12)))
+    font = get_font(font_size)
+    # 强制透明度范围，但偏向半透明
+    alpha = random.uniform(MIN_ALPHA, min(MAX_ALPHA, 0.6))  # 红色水印稍微透明一些
+    
+    overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    text_w, text_h = get_text_bbox(overlay_draw, text, font)
+    
+    # 随机位置选择：角落、中心或对角线
+    position_type = random.choice(['corner', 'center', 'diagonal'])
+    
+    if position_type == 'corner':
+        # 角落位置
+        corner = random.choice(['tl', 'tr', 'bl', 'br'])
+        margin = max(15, int(w * 0.02))
+        
+        if corner == 'tl':
+            pos = (margin, margin)
+        elif corner == 'tr':
+            pos = (max(0, w - text_w - margin), margin)
+        elif corner == 'bl':
+            pos = (margin, max(0, h - text_h - margin))
+        else:  # br
+            pos = (max(0, w - text_w - margin), max(0, h - text_h - margin))
+    
+    elif position_type == 'center':
+        # 居中位置
+        pos = ((w - text_w) // 2, (h - text_h) // 2)
+    
+    else:  # diagonal
+        # 对角线位置
+        diagonal_pos = random.uniform(0.2, 0.8)  # 沿对角线的相对位置
+        x = int(diagonal_pos * (w - text_w))
+        y = int(diagonal_pos * (h - text_h))
+        pos = (x, y)
+    
+    # 固定使用红色，但根据背景亮度调整深浅
+    bg_brightness = BRIGHTNESS_THRESHOLD
+    if bg_brightness > BRIGHTNESS_THRESHOLD:
+        # 亮背景 -> 深红色
+        red_color = (180, 0, 0)  # 深红色
+    else:
+        # 暗背景 -> 浅红色
+        red_color = (255, 50, 50)  # 浅红色
+    
+    # 使用新的透明文本绘制方法
+    overlay = draw_text_with_alpha(overlay, pos, text, font, red_color, alpha)
+    
+    # 轻微旋转以增加变化性
+    rotation = random.uniform(-15, 15)
+    if rotation != 0:
+        overlay = overlay.rotate(rotation, expand=False, fillcolor=(255, 255, 255, 0))
+    
+    return overlay
+
 # ============================================================================
 # 主要处理函数
 # ============================================================================
@@ -1138,6 +1287,8 @@ def generate_watermark_variant(image_path, output_index, max_retries=3):
         style_functions.append(('elecfans_web_svg_center', lambda: elecfans_web_svg_center(w, h)))
     if 'wechat_svg_corner_id' in ENABLED_STYLES:
         style_functions.append(('wechat_svg_corner_id', lambda: wechat_svg_corner_id(w, h)))
+    if 'red_transparent_text' in ENABLED_STYLES:
+        style_functions.append(('red_transparent_text', lambda: red_transparent_text(w, h)))
     
     if not style_functions:
         print(f"警告: 没有启用的风格")
@@ -1234,7 +1385,7 @@ def main():
     ensure_dirs()
     
     print("=" * 70)
-    print("增强的水印生成脚本 - 可见性强化版 (19种风格)")
+    print("增强的水印生成脚本 - 可见性强化版 (20种风格)")
     print("=" * 70)
     print(f"输入目录: {INPUT_DIR}")
     print(f"输出目录: {OUTPUT_DIR}")

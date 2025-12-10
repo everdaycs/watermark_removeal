@@ -5,6 +5,7 @@ import os
 import cv2
 import numpy as np
 import torch
+import random
 from torch.utils.data import Dataset, DataLoader
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
@@ -12,7 +13,7 @@ from PIL import Image
 
 class WatermarkDataset(Dataset):
     """水印去除数据集"""
-    def __init__(self, clean_dir, watermarked_dir, transform=None, image_size=(256, 256), source_dir=None):
+    def __init__(self, clean_dir, watermarked_dir, transform=None, image_size=(256, 256), source_dir=None, return_patches=False, is_training=True):
         """
         Args:
             clean_dir: 干净图像目录（用于处理已有数据集）或原始源目录（用于新生成的数据）
@@ -20,12 +21,16 @@ class WatermarkDataset(Dataset):
             transform: 数据增强
             image_size: 图像尺寸
             source_dir: 可选的源图像目录（如果为None，则使用clean_dir）
+            return_patches: 是否同时返回局部Patch（用于训练）
+            is_training: 是否为训练模式（影响patch裁剪策略）
         """
         self.clean_dir = clean_dir
         self.watermarked_dir = watermarked_dir
         self.source_dir = source_dir or clean_dir  # 如果指定了source_dir，优先使用
         self.transform = transform
         self.image_size = image_size
+        self.return_patches = return_patches
+        self._is_training = is_training  # 标记是否为训练模式
         
         # 获取所有图像对
         self.image_pairs = self._get_image_pairs()
@@ -141,28 +146,89 @@ class WatermarkDataset(Dataset):
         clean_img = cv2.cvtColor(clean_img, cv2.COLOR_BGR2RGB)
         watermarked_img = cv2.cvtColor(watermarked_img, cv2.COLOR_BGR2RGB)
         
-        # 确保图像尺寸一致（在应用transform之前）
+        # 确保两个图像尺寸完全一致
+        if clean_img.shape != watermarked_img.shape:
+            watermarked_img = cv2.resize(watermarked_img, (clean_img.shape[1], clean_img.shape[0]))
+        
+        # 1. 全局图像 (Global): 调整大小到 image_size
         if self.image_size:
-            clean_img = cv2.resize(clean_img, (self.image_size[1], self.image_size[0]))
-            watermarked_img = cv2.resize(watermarked_img, (self.image_size[1], self.image_size[0]))
+            global_clean = cv2.resize(clean_img, (self.image_size[1], self.image_size[0]))
+            global_watermarked = cv2.resize(watermarked_img, (self.image_size[1], self.image_size[0]))
+        else:
+            global_clean = clean_img
+            global_watermarked = watermarked_img
         
-        # 数据增强
+        # 数据增强 (Global)
         if self.transform:
-            # Albumentations需要同时增强两张图像
-            augmented = self.transform(image=watermarked_img, mask=clean_img)
-            watermarked_img = augmented['image']
-            clean_img = augmented['mask']
-        
-        return {
-            'watermarked': watermarked_img,
-            'clean': clean_img,
+            augmented = self.transform(image=global_watermarked, mask=global_clean)
+            global_watermarked_t = augmented['image']
+            global_clean_t = augmented['mask']
+        else:
+            # 如果没有transform，至少需要转换为Tensor
+            global_watermarked_t = torch.from_numpy(global_watermarked.transpose(2, 0, 1)).float() / 255.0
+            global_clean_t = torch.from_numpy(global_clean.transpose(2, 0, 1)).float() / 255.0
+            
+        result = {
+            'watermarked': global_watermarked_t,
+            'clean': global_clean_t,
             'filename': clean_name
         }
+        
+        # 2. 局部图像 (Local Patch): 随机裁剪（训练时）或中心裁剪（验证时）
+        if self.return_patches and self.image_size:
+            h, w = clean_img.shape[:2]
+            th, tw = self.image_size
+            
+            # 如果图像小于目标尺寸，先调整大小
+            if h < th or w < tw:
+                scale = max(th/h, tw/w)
+                new_h, new_w = int(h * scale) + 1, int(w * scale) + 1
+                clean_img_resized = cv2.resize(clean_img, (new_w, new_h))
+                watermarked_img_resized = cv2.resize(watermarked_img, (new_w, new_h))
+            else:
+                clean_img_resized = clean_img
+                watermarked_img_resized = watermarked_img
+                
+            h, w = clean_img_resized.shape[:2]
+            
+            # 裁剪策略：训练时随机，验证时中心裁剪
+            if hasattr(self, '_is_training') and self._is_training:
+                # 训练时：随机裁剪
+                if h > th:
+                    i = random.randint(0, h - th)
+                else:
+                    i = 0
+                
+                if w > tw:
+                    j = random.randint(0, w - tw)
+                else:
+                    j = 0
+            else:
+                # 验证时：中心裁剪，确保确定性
+                i = max(0, (h - th) // 2)
+                j = max(0, (w - tw) // 2)
+                
+            local_clean = clean_img_resized[i:i+th, j:j+tw]
+            local_watermarked = watermarked_img_resized[i:i+th, j:j+tw]
+            
+            # 数据增强 (Local) - 使用相同的transform
+            if self.transform:
+                augmented_local = self.transform(image=local_watermarked, mask=local_clean)
+                local_watermarked_t = augmented_local['image']
+                local_clean_t = augmented_local['mask']
+            else:
+                local_watermarked_t = torch.from_numpy(local_watermarked.transpose(2, 0, 1)).float() / 255.0
+                local_clean_t = torch.from_numpy(local_clean.transpose(2, 0, 1)).float() / 255.0
+                
+            result['local_watermarked'] = local_watermarked_t
+            result['local_clean'] = local_clean_t
+        
+        return result
 
 def get_train_transform(image_size=(256, 256)):
-    """获取训练数据增强"""
+    """获取训练数据增强 (Resize由Dataset处理)"""
     return A.Compose([
-        A.Resize(height=image_size[0], width=image_size[1]),
+        # Resize移至Dataset中处理，以支持Global/Local策略
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.3),
         A.RandomRotate90(p=0.3),
@@ -190,9 +256,9 @@ def get_train_transform(image_size=(256, 256)):
     ], additional_targets={'mask': 'image'})
 
 def get_val_transform(image_size=(256, 256)):
-    """获取验证数据增强（仅调整大小和归一化）"""
+    """获取验证数据增强 (Resize由Dataset处理)"""
     return A.Compose([
-        A.Resize(height=image_size[0], width=image_size[1]),
+        # Resize移至Dataset中处理
         A.Normalize(
             mean=[0.5, 0.5, 0.5],
             std=[0.5, 0.5, 0.5],
@@ -212,7 +278,9 @@ def create_dataloaders(config):
         watermarked_dir=config.TRAIN_WATERMARKED_PATH,
         source_dir=train_source_dir,  # 可选的源目录
         transform=get_train_transform(config.IMAGE_SIZE),
-        image_size=config.IMAGE_SIZE
+        image_size=config.IMAGE_SIZE,
+        return_patches=True,  # 启用Patch训练
+        is_training=True  # 训练时使用随机裁剪
     )
     
     val_dataset = WatermarkDataset(
@@ -220,7 +288,9 @@ def create_dataloaders(config):
         watermarked_dir=config.VAL_WATERMARKED_PATH,
         source_dir=val_source_dir,  # 可选的源目录
         transform=get_val_transform(config.IMAGE_SIZE),
-        image_size=config.IMAGE_SIZE
+        image_size=config.IMAGE_SIZE,
+        return_patches=True,  # 验证时也使用全局+局部patch，保持与训练一致
+        is_training=False  # 验证时使用确定性裁剪
     )
     
     train_loader = DataLoader(

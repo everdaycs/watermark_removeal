@@ -32,7 +32,9 @@ checkpoints/*.pt
 logs/
 results/
 *.log
-
+results_tiled_enhanced/
+results_tiled
+    
 # 临时文件
 *.tmp
 .DS_Store
@@ -46,6 +48,7 @@ Thumbs.db
 *_test_results/
 test_*.jpg
 test_*.png
+results_tiled_enhanced_/
 
 # 保留目录结构但忽略内容
 !checkpoints/.gitkeep

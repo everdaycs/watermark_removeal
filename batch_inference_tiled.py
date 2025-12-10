@@ -290,7 +290,7 @@ def main():
     
     # 设置输出目录
     if args.output is None:
-        args.output = os.path.join(config.PROJECT_ROOT, "results_tiled")
+        args.output = os.path.join(config.PROJECT_ROOT, "results_tiled_enhanced_")
     
     # 查找检查点
     if args.checkpoint is None:

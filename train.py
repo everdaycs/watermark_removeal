@@ -24,8 +24,21 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch):
     pbar = tqdm(train_loader, desc=f"Epoch {epoch} [Train]")
     
     for batch_idx, batch in enumerate(pbar):
-        watermarked = batch['watermarked'].to(device)
-        clean = batch['clean'].to(device)
+        watermarked_global = batch['watermarked'].to(device)
+        clean_global = batch['clean'].to(device)
+        
+        # 如果存在局部Patch，将其与全局图像合并训练
+        if 'local_watermarked' in batch:
+            watermarked_local = batch['local_watermarked'].to(device)
+            clean_local = batch['local_clean'].to(device)
+            
+            # 在batch维度拼接: [B, C, H, W] -> [2B, C, H, W]
+            # 这样模型同时学习全局结构(Resize)和局部细节(Crop)
+            watermarked = torch.cat([watermarked_global, watermarked_local], dim=0)
+            clean = torch.cat([clean_global, clean_local], dim=0)
+        else:
+            watermarked = watermarked_global
+            clean = clean_global
         
         # 前向传播
         optimizer.zero_grad()
@@ -65,8 +78,21 @@ def validate(model, val_loader, criterion, device, epoch):
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(pbar):
-            watermarked = batch['watermarked'].to(device)
-            clean = batch['clean'].to(device)
+            watermarked_global = batch['watermarked'].to(device)
+            clean_global = batch['clean'].to(device)
+            
+            # 如果存在局部Patch，将其与全局图像合并验证
+            if 'local_watermarked' in batch:
+                watermarked_local = batch['local_watermarked'].to(device)
+                clean_local = batch['local_clean'].to(device)
+                
+                # 在batch维度拼接: [B, C, H, W] -> [2B, C, H, W]
+                # 保持与训练时相同的数据分布
+                watermarked = torch.cat([watermarked_global, watermarked_local], dim=0)
+                clean = torch.cat([clean_global, clean_local], dim=0)
+            else:
+                watermarked = watermarked_global
+                clean = clean_global
             
             # 前向传播
             output = model(watermarked)
