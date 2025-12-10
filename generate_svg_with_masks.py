@@ -63,6 +63,13 @@ WECHAT_ID_CANDIDATES = [
     "模拟笔记本",
     "某某公众号",
     "DemoWenLab",
+    "TechWatermark",
+    "ElecFans.com",
+    "WatermarkMaster",
+    "www.elecfans.com",
+    "电子发烧友",
+    "ElecFans",
+
 ]
 
 # SVG 渲染缓存（避免重复处理相同的SVG）
@@ -102,7 +109,7 @@ ELECFANS_LOGO_CORNER_ALPHA_MIN = 0.75
 ELECFANS_LOGO_CORNER_ALPHA_MAX = 0.90
 
 # ElecFans Shadow Configuration
-ELECFANS_SHADOW_OFFSET_RATIO = 0.015  # Shadow offset as percentage of width (1.5%)
+ELECFANS_SHADOW_OFFSET_RATIO = 0.01  # Shadow offset as percentage of width (1.5%)
 ELECFANS_SHADOW_MIN_OFFSET = 1        # Minimum shadow offset in pixels
 
 # optional blur to imitate screenshot / compression
@@ -166,7 +173,7 @@ def get_text_bbox(draw, text, font):
 def get_estimated_brightness(image_rgb, region_box=None):
     """
     估计图像或区域的平均亮度
-
+F
     Args:
         image_rgb (PIL.Image): RGB 图像
         region_box (tuple): 可选的裁剪区域 (x0, y0, x1, y1)
@@ -311,17 +318,19 @@ def validate_watermark_visibility(overlay_array, w, h):
 # SVG 渲染辅助函数
 # ============================================================================
 
-def load_svg_as_rgba(svg_path: str, target_width: int = None, target_height: int = None) -> Image.Image:
+def load_svg_as_rgba(svg_path: str, target_width: int = None, target_height: int = None,
+                     min_render_size: int = 256) -> Image.Image:
     """
     将 SVG 文件渲染为 PIL RGBA 图像
 
     使用 cairosvg 将 SVG 转换为 PNG，然后加载为 RGBA 图像。
-    结果被缓存以避免重复渲染相同的 SVG。
+    为了保持高质量，会使用最小渲染尺寸。
 
     Args:
         svg_path (str): SVG 文件路径
         target_width (int): 目标宽度（像素），可选
         target_height (int): 目标高度（像素），可选
+        min_render_size (int): 最小渲染尺寸，默认256像素
 
     Returns:
         PIL.Image: RGBA 图像，或 None 如果加载失败
@@ -330,7 +339,7 @@ def load_svg_as_rgba(svg_path: str, target_width: int = None, target_height: int
         return None
 
     # 检查缓存
-    cache_key = (svg_path, target_width, target_height)
+    cache_key = (svg_path, target_width, target_height, min_render_size)
     if cache_key in _SVG_CACHE:
         return _SVG_CACHE[cache_key].copy()
 
@@ -339,20 +348,35 @@ def load_svg_as_rgba(svg_path: str, target_width: int = None, target_height: int
             print(f"警告: SVG 文件不存在: {svg_path}")
             return None
 
+        # 计算渲染尺寸 - 确保最小质量
+        render_width = target_width
+        render_height = target_height
+
+        if target_width is not None and target_width < min_render_size:
+            # 如果目标尺寸太小，使用最小渲染尺寸，然后再缩放
+            render_width = min_render_size
+            render_height = None  # 让高度自动缩放
+
         # 使用 cairosvg 将 SVG 转换为 PNG 字节
         png_bytes = io.BytesIO()
-        
+
         kwargs = {'url': svg_path, 'write_to': png_bytes}
-        if target_width is not None:
-            kwargs['output_width'] = target_width
-        if target_height is not None:
-            kwargs['output_height'] = target_height
-            
+        if render_width is not None:
+            kwargs['output_width'] = render_width
+        if render_height is not None:
+            kwargs['output_height'] = render_height
+
         cairosvg.svg2png(**kwargs)
         png_bytes.seek(0)
 
         # 加载 PNG 为 RGBA 图像
         img = Image.open(png_bytes).convert('RGBA')
+
+        # 如果需要缩放到目标尺寸
+        if target_width is not None and render_width != target_width:
+            # 使用高质量的LANCZOS重采样
+            img = img.resize((target_width, int(target_width * img.height / img.width)),
+                           Image.Resampling.LANCZOS)
 
         # 缓存结果
         _SVG_CACHE[cache_key] = img.copy()
@@ -374,10 +398,11 @@ def elecfans_logo_svg_corner(w, h):
 
     try:
         # 1. Determine exact target size first to avoid upscaling blur
-        logo_w = int(w * random.uniform(0.10, 0.40))
+        logo_w = int(w * random.uniform(0.20, 0.60))
         
         # Render SVG at exact width (let height auto-scale)
-        svg_rgba = load_svg_as_rgba(ELECFANS_LOGO_SVG, target_width=logo_w)
+        # 使用高质量渲染：最小256像素，然后缩放
+        svg_rgba = load_svg_as_rgba(ELECFANS_LOGO_SVG, target_width=logo_w, min_render_size=256)
         if svg_rgba is None:
             return None
             
@@ -440,7 +465,7 @@ def elecfans_web_svg_center(w, h):
         return None
 
     try:
-        svg_rgba = load_svg_as_rgba(ELECFANS_WEB_SVG, int(w * 0.2), int(h * 0.2))
+        svg_rgba = load_svg_as_rgba(ELECFANS_WEB_SVG, int(w * 0.2), int(h * 0.2), min_render_size=256)
         if svg_rgba is None:
             return None
 
@@ -481,7 +506,7 @@ def wechat_svg_corner_id(w, h):
         icon_width = icon_height  # 保持正方形
 
         # 加载并缩放SVG图标
-        svg_rgba = load_svg_as_rgba(WECHAT_SVG, icon_width, icon_height)
+        svg_rgba = load_svg_as_rgba(WECHAT_SVG, icon_width, icon_height, min_render_size=128)
         if svg_rgba is None:
             return None
 
@@ -547,7 +572,7 @@ def wechat_svg_corner_id(w, h):
             gap = max(4, int(gap * scale_factor))
 
             # 重新加载图标并应用阴影
-            temp_svg = load_svg_as_rgba(WECHAT_SVG, icon_width, icon_height)
+            temp_svg = load_svg_as_rgba(WECHAT_SVG, icon_width, icon_height, min_render_size=128)
             if temp_svg is None:
                 return None
                 
@@ -643,7 +668,7 @@ def elecfans_logo_svg_center(w, h):
         return None
 
     try:
-        svg_rgba = load_svg_as_rgba(ELECFANS_LOGO_SVG, int(w * 0.18), int(h * 0.18))
+        svg_rgba = load_svg_as_rgba(ELECFANS_LOGO_SVG, int(w * 0.18), int(h * 0.18), min_render_size=256)
         if svg_rgba is None:
             return None
 
@@ -689,7 +714,7 @@ def elecfans_web_svg_corner(w, h):
             )
         )
         # Render at exact width, let height be auto-calculated by cairosvg
-        svg_rgba = load_svg_as_rgba(ELECFANS_WEB_SVG, target_width=target_w)
+        svg_rgba = load_svg_as_rgba(ELECFANS_WEB_SVG, target_width=target_w, min_render_size=256)
         if svg_rgba is None:
             return None
 
