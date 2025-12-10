@@ -46,7 +46,7 @@ ENABLE_VISIBILITY_VALIDATION = True
 # ============================================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-NUM_VARIANTS_PER_IMAGE = 16
+NUM_VARIANTS_PER_IMAGE = 32
 INPUT_DIR = "/home/kaga/Desktop/watermaker remover/20251127_no_watermark_demo"
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_images")
 MASK_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_masks")
@@ -91,6 +91,7 @@ ENABLED_SVG_STYLES = [
     'elecfans_web_svg_corner',      # ElecFans Web SVG角落
     # 'wechat_svg_center',          # 禁用：真实微信水印通常是角落小图标
     'combined_svg_styles',          # 组合SVG风格
+    'red_diagonal_watermark',       # 红色半透明斜水印
 ]
 
 COMBINED_STYLE_PROBABILITY = 0.4  # 使用组合风格的概率
@@ -105,8 +106,8 @@ ELECFANS_WEB_CORNER_ALPHA_MIN = 0.75
 ELECFANS_WEB_CORNER_ALPHA_MAX = 0.85
 
 # ElecFans logo corner (separate tuning from web horizontal logo)
-ELECFANS_LOGO_CORNER_ALPHA_MIN = 0.75
-ELECFANS_LOGO_CORNER_ALPHA_MAX = 0.90
+ELECFANS_LOGO_CORNER_ALPHA_MIN = 0.80
+ELECFANS_LOGO_CORNER_ALPHA_MAX = 0.95
 
 # ElecFans Shadow Configuration
 ELECFANS_SHADOW_OFFSET_RATIO = 0.01  # Shadow offset as percentage of width (1.5%)
@@ -398,7 +399,7 @@ def elecfans_logo_svg_corner(w, h):
 
     try:
         # 1. Determine exact target size first to avoid upscaling blur
-        logo_w = int(w * random.uniform(0.20, 0.60))
+        logo_w = int(w * random.uniform(0.30, 0.50))
         
         # Render SVG at exact width (let height auto-scale)
         # 使用高质量渲染：最小256像素，然后缩放
@@ -785,6 +786,68 @@ def elecfans_web_svg_corner(w, h):
     except Exception as e:
         return None
 
+def red_diagonal_watermark(w, h):
+    """红色半透明斜水印 - 通过中心水印添加偏移和旋转获得"""
+    if not CAIROSVG_AVAILABLE or not os.path.exists(ELECFANS_WEB_SVG):
+        return None
+
+    try:
+        # 1. 加载SVG并调整大小
+        base_size = int(min(w, h) * random.uniform(0.15, 0.25))
+        svg_rgba = load_svg_as_rgba(ELECFANS_WEB_SVG, base_size, base_size, min_render_size=256)
+        if svg_rgba is None:
+            return None
+
+        # 2. 转换为红色半透明
+        red_alpha = random.uniform(0.3, 0.5)  # 红色半透明
+
+        # 直接操作numpy数组
+        svg_array = np.array(svg_rgba)
+
+        # 找到所有有内容的像素（alpha > 0）
+        content_mask = svg_array[:, :, 3] > 0
+
+        # 将这些像素设置为纯红色，并调整透明度
+        svg_array[content_mask, 0] = 255  # Red
+        svg_array[content_mask, 1] = 0    # Green
+        svg_array[content_mask, 2] = 0    # Blue
+        svg_array[content_mask, 3] = (svg_array[content_mask, 3] * red_alpha).astype(np.uint8)
+
+        svg_rgba = Image.fromarray(svg_array, 'RGBA')
+
+        # 3. 应用旋转创建斜效果
+        rotation_angle = random.uniform(-20, 20)  # -20到20度随机旋转
+        # 使用高质量重采样避免颜色混合
+        svg_rgba = svg_rgba.rotate(rotation_angle, expand=True, fillcolor=(0, 0, 0, 0), resample=Image.BICUBIC)
+
+        # 4. 创建输出图像
+        overlay = Image.new('RGBA', (w, h), (0, 0, 0, 0))  # 使用透明背景而不是白色
+
+        # 5. 计算位置 - 基于中心但有偏移，使其看起来是斜着的
+        rotated_w, rotated_h = svg_rgba.size
+
+        # 中心位置加上随机偏移
+        center_x = w // 2
+        center_y = h // 2
+
+        # 添加偏移使水印看起来不完全居中
+        offset_x = random.randint(-int(w * 0.1), int(w * 0.1))
+        offset_y = random.randint(-int(h * 0.1), int(h * 0.1))
+
+        pos_x = center_x - rotated_w // 2 + offset_x
+        pos_y = center_y - rotated_h // 2 + offset_y
+
+        # 确保不超出边界
+        pos_x = max(0, min(pos_x, w - rotated_w))
+        pos_y = max(0, min(pos_y, h - rotated_h))
+
+        overlay.paste(svg_rgba, (pos_x, pos_y))  # 不使用mask参数
+        return overlay
+
+    except Exception as e:
+        print(f"Error creating red diagonal watermark: {e}")
+        return None
+
 def combined_svg_styles(w, h):
     """组合多个SVG风格"""
     available_styles = [
@@ -793,6 +856,7 @@ def combined_svg_styles(w, h):
         wechat_svg_corner_id,
         elecfans_logo_svg_center,
         elecfans_web_svg_corner,
+        red_diagonal_watermark,  # 红色半透明斜水印
         # wechat_svg_center  # 移除：不使用居中的微信水印
     ]
 
@@ -845,6 +909,8 @@ def generate_svg_watermark_variant(image_path, output_index, max_retries=3):
         style_functions.append(('elecfans_logo_svg_center', lambda: elecfans_logo_svg_center(w, h)))
     if 'elecfans_web_svg_corner' in ENABLED_SVG_STYLES:
         style_functions.append(('elecfans_web_svg_corner', lambda: elecfans_web_svg_corner(w, h)))
+    if 'red_diagonal_watermark' in ENABLED_SVG_STYLES:
+        style_functions.append(('red_diagonal_watermark', lambda: red_diagonal_watermark(w, h)))
     # wechat_svg_center 已禁用
 
     if not style_functions:
