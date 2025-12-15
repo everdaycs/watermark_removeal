@@ -31,6 +31,8 @@ import io
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import numpy as np
+import concurrent.futures
+import multiprocessing
 
 # ============================================================================
 # 可见性约束配置
@@ -48,7 +50,7 @@ MIN_TEXT_HEIGHT_RATIO = 0.04  # 图像高度的 4%
 MIN_VISIBLE_COVERAGE = 0.02  # 至少 2% 的可见面积
 
 # 亮度阈值 (用于颜色对比度选择)
-BRIGHTNESS_THRESHOLD = 128
+BRIGHTNESS_THRESHOLD = 200
 
 # 启用可见性验证
 ENABLE_VISIBILITY_VALIDATION = True
@@ -58,10 +60,10 @@ ENABLE_VISIBILITY_VALIDATION = True
 # ============================================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-NUM_VARIANTS_PER_IMAGE = 32
+NUM_VARIANTS_PER_IMAGE = 128
 INPUT_DIR = "/home/kaga/Desktop/watermaker remover/20251201/no_watermark_20251201"
-OUTPUT_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_images")  
-MASK_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_masks")     
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "data/merged_watermark_images")  
+MASK_DIR = os.path.join(SCRIPT_DIR, "data/merged_watermark_masks")     
 LOGO_PATH = os.path.join(SCRIPT_DIR, "logo.png")
 
 TEXT_CANDIDATES = [
@@ -192,7 +194,9 @@ ENABLED_STYLES = [
     'elecfans_web_svg_center',    # 17
     'wechat_svg_corner_id',       # 18
     'red_transparent_text',       # 19 红色半透明文本水印
+    'elecfans_chinese_text',      # 20 “电子发烧友”专用文字水印
     'combined_styles',         # 20
+    'random_slanted_text',         # 21 随机分布的倾斜文本
 ]
 
 COMBINED_STYLE_PROBABILITY = 0.3  # 使用组合风格的概率
@@ -461,7 +465,7 @@ def single_text_corner(w, h):
     """风格1: 单个文本在四个角之一 (可见性强制版)"""
     text = random.choice(TEXT_CANDIDATES)
     # 最小尺寸: 4-8% 的图像宽度
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.04, 0.08)))
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.04, 0.42)))
     font = get_font(font_size)
     # 强制透明度范围
     alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
@@ -497,8 +501,8 @@ def single_text_corner(w, h):
 def single_text_center(w, h):
     """风格2: 大型居中半透明文本 (可见性强制版)"""
     text = random.choice(TEXT_CANDIDATES)
-    # 最小尺寸: 8-15% 的图像高度
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.08, 0.15)))
+    # 最小尺寸: 8-42% 的图像高度
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.08, 0.42)))
     font = get_font(font_size)
     # 强制透明度范围
     alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
@@ -522,7 +526,7 @@ def tiled_text(w, h):
     """风格3: 平铺的小文本 (可见性强制版)"""
     text = random.choice(TEXT_CANDIDATES)
     # 最小尺寸: 3-6% 的图像高度
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.03, 0.06)))
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.03, 0.42)))
     font = get_font(font_size)
     # 强制透明度范围
     alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
@@ -554,8 +558,8 @@ def tiled_text(w, h):
 def diagonal_band(w, h):
     """风格4: 对角线波段 (可见性强制版)"""
     text = random.choice(TEXT_CANDIDATES)
-    # 最小尺寸: 6-12% 的图像高度
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.06, 0.12)))
+    # 最小尺寸: 6-42% 的图像高度
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.06, 0.42)))
     font = get_font(font_size)
     # 强制透明度范围
     alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
@@ -579,7 +583,7 @@ def multi_line_text_center(w, h):
     lines = random.sample(TEXT_CANDIDATES, min(2, len(TEXT_CANDIDATES)))  # 至少 2 行
     
     # 最小尺寸: 5-10% 的图像高度
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.05, 0.10)))
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.05, 0.42)))
     font = get_font(font_size)
     # 强制透明度范围
     alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
@@ -672,8 +676,8 @@ def qr_code_style(w, h):
 def outlined_text(w, h):
     """风格8: 带轮廓的文本 (可见性强制版)"""
     text = random.choice(TEXT_CANDIDATES)
-    # 最小尺寸: 7-13% 的图像高度
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.07, 0.13)))
+    # 最小尺寸: 7-42% 的图像高度
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.07, 0.42)))
     font = get_font(font_size)
     # 强制透明度范围
     alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
@@ -687,7 +691,7 @@ def outlined_text(w, h):
     pos = ((w - text_w) // 2, (h - text_h) // 2)
 
     # 自适应颜色: 轮廓颜色与主文本对比
-    bg_brightness = BRIGHTNESS_THRESHOLD
+    bg_brightness = random.randint(0, 255)
     if bg_brightness > BRIGHTNESS_THRESHOLD:
         outline_color = (0, 0, 0)
         main_color = (255, 255, 255)
@@ -715,7 +719,7 @@ def shadow_text(w, h):
     """风格9: 带阴影的文本 (可见性强制版)"""
     text = random.choice(TEXT_CANDIDATES)
     # 最小尺寸: 8-16% 的图像高度
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.08, 0.16)))
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.08, 0.42)))
     font = get_font(font_size)
     # 强制透明度范围
     alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
@@ -746,7 +750,7 @@ def gradient_alpha_text(w, h):
     """风格10: 透明度渐变的文本 (可见性强制版)"""
     text = random.choice(TEXT_CANDIDATES)
     # 最小尺寸: 8-16% 的图像高度
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.08, 0.16)))
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.08, 0.42)))
     font = get_font(font_size)
     # 强制基础透明度: 至少 MIN_ALPHA
     base_alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
@@ -790,8 +794,8 @@ def gradient_alpha_text(w, h):
 def noisy_eroded_text(w, h):
     """风格11: 有噪声边缘的文本 (可见性强制版)"""
     text = random.choice(TEXT_CANDIDATES)
-    # 最小尺寸: 6-12% 的图像高度
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.06, 0.12)))
+    # 最小尺寸: 6-42% 的图像高度
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.06, 0.42)))
     font = get_font(font_size)
     # 强制透明度范围
     alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
@@ -836,7 +840,7 @@ def banner_box(w, h):
     """风格12: 带背景条的文本 (可见性强制版)"""
     text = random.choice(TEXT_CANDIDATES)
     # 最小尺寸: 6-12% 的图像高度
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.06, 0.12)))
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.06, 0.42)))
     font = get_font(font_size)
     # 强制透明度范围
     text_alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
@@ -853,13 +857,13 @@ def banner_box(w, h):
     text_y = (h - text_h) // 2
     
     # 自适应背景和文本颜色
-    bg_brightness = BRIGHTNESS_THRESHOLD
+    bg_brightness = random.randint(0, 255)
     if bg_brightness > BRIGHTNESS_THRESHOLD:
         box_color = (0, 0, 0)        # 深背景
-        text_color = (255, 255, 255)  # 浅文本
+        text_color = (255, 255, 255) # 浅文本
     else:
         box_color = (255, 255, 255)  # 浅背景
-        text_color = (0, 0, 0)        # 深文本
+        text_color = (0, 0, 0)       # 深文本
     
     if is_horizontal:
         # 水平条
@@ -891,7 +895,7 @@ def curved_text(w, h):
     """风格13: 弧形排列的文本 (可见性强制版)"""
     text = random.choice(TEXT_CANDIDATES)
     # 最小尺寸: 5-10% 的图像高度
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.05, 0.10)))
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.05, 0.42)))
     font = get_font(font_size)
     # 强制透明度范围
     alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
@@ -936,6 +940,54 @@ def curved_text(w, h):
         if 0 <= paste_x < w and 0 <= paste_y < h:
             overlay.paste(char_img, (paste_x, paste_y), char_img)
     
+    return overlay
+
+def random_slanted_text(w, h):
+    """风格21: 随机分布的倾斜文本 (可见性强制版)"""
+    text = random.choice(TEXT_CANDIDATES)
+    # 最小尺寸: 4-8% 的图像高度
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.04, 0.42)))
+    font = get_font(font_size)
+    # 强制透明度范围
+    alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
+    
+    overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
+    
+    # 自适应颜色
+    color = select_contrasting_color(BRIGHTNESS_THRESHOLD)
+    
+    # 随机数量
+    num_texts = random.randint(5, 15)
+    
+    # 随机倾斜角度 (所有文本使用相同的倾斜角度)
+    angle = random.uniform(-45, 45)
+    # 避免接近0度
+    if -10 < angle < 10:
+        angle = 30 if angle > 0 else -30
+        
+    for _ in range(num_texts):
+        # 创建临时图像绘制单个文本
+        # 预估文本大小
+        dummy_draw = ImageDraw.Draw(Image.new('RGBA', (1, 1)))
+        text_w, text_h = get_text_bbox(dummy_draw, text, font)
+        
+        # 增加一些padding以防旋转裁剪
+        temp_w, temp_h = int(text_w * 1.5), int(text_h * 1.5)
+        temp_img = Image.new('RGBA', (temp_w, temp_h), (255, 255, 255, 0))
+        
+        # 在中心绘制
+        draw_pos = ((temp_w - text_w) // 2, (temp_h - text_h) // 2)
+        temp_img = draw_text_with_alpha(temp_img, draw_pos, text, font, color, alpha)
+        
+        # 旋转
+        rotated_text = temp_img.rotate(angle, expand=True, fillcolor=(255, 255, 255, 0))
+        
+        # 随机位置粘贴
+        paste_x = random.randint(-rotated_text.width // 2, w - rotated_text.width // 2)
+        paste_y = random.randint(-rotated_text.height // 2, h - rotated_text.height // 2)
+        
+        overlay.paste(rotated_text, (paste_x, paste_y), rotated_text)
+        
     return overlay
 
 def combined_styles(w, h, enabled_single_styles):
@@ -1174,7 +1226,7 @@ def red_transparent_text(w, h):
     """风格19: 红色半透明文本水印 - 使用TEXT_CANDIDATES内容"""
     text = random.choice(TEXT_CANDIDATES)
     # 最小尺寸: 6-12% 的图像高度
-    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.06, 0.12)))
+    font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.06, 0.42)))
     font = get_font(font_size)
     # 强制透明度范围，但偏向半透明
     alpha = random.uniform(MIN_ALPHA, min(MAX_ALPHA, 0.6))  # 红色水印稍微透明一些
@@ -1212,7 +1264,7 @@ def red_transparent_text(w, h):
         pos = (x, y)
     
     # 固定使用红色，但根据背景亮度调整深浅
-    bg_brightness = BRIGHTNESS_THRESHOLD
+    bg_brightness = random.randint(0, 255)
     if bg_brightness > BRIGHTNESS_THRESHOLD:
         # 亮背景 -> 深红色
         red_color = (180, 0, 0)  # 深红色
@@ -1228,6 +1280,134 @@ def red_transparent_text(w, h):
     if rotation != 0:
         overlay = overlay.rotate(rotation, expand=False, fillcolor=(255, 255, 255, 0))
     
+    return overlay
+
+
+def elecfans_chinese_text(w, h):
+    """风格20: “电子发烧友”专用文字水印
+
+    目标：模拟站点常见中文品牌水印（角落小字 / 底部条幅 / 轻度斜放）。
+    - 文本固定为“电子发烧友”
+    - 透明度遵循全局 MIN_ALPHA/MAX_ALPHA
+    - 颜色以白/黑为主，搭配轻微描边/阴影以增强可见性
+    """
+    text = "电子发烧友"
+
+    # 由于全局约束 MIN_VISIBLE_COVERAGE=2% 很严格，内部做一次快速重试：
+    # 如果覆盖率不够，就增大字号/重复次数重新生成。
+    for attempt in range(3):
+        # 尺寸：基础 5%~10%，若重试则逐步增大
+        scale_boost = 1.0 + attempt * 0.20
+        font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.05, 0.10) * scale_boost))
+        font = get_font(font_size)
+        alpha = random.uniform(MIN_ALPHA, MAX_ALPHA)
+
+        overlay = Image.new('RGBA', (w, h), (255, 255, 255, 0))
+        overlay_draw = ImageDraw.Draw(overlay)
+        text_w, text_h = get_text_bbox(overlay_draw, text, font)
+
+        # 位置模式：角落 / 底部条幅 / 斜对角
+        mode = random.choice(['corner', 'bottom_strip', 'diagonal'])
+        margin = max(8, int(w * 0.01))
+        rotation = 0.0
+
+        if mode == 'corner':
+            corner = 'br' if random.random() < 0.8 else random.choice(['tl', 'tr', 'bl'])
+            if corner == 'tl':
+                pos = (margin, margin)
+            elif corner == 'tr':
+                pos = (max(0, w - text_w - margin), margin)
+            elif corner == 'bl':
+                pos = (margin, max(0, h - text_h - margin))
+            else:  # br
+                pos = (max(0, w - text_w - margin), max(0, h - text_h - margin))
+            rotation = random.uniform(-6, 6)
+
+        elif mode == 'bottom_strip':
+            pos = ((w - text_w) // 2, max(0, h - text_h - margin))
+            rotation = random.uniform(-2, 2)
+
+            # 可选：底部淡色条增强真实感
+            if random.random() < 0.5:
+                pad_x = max(10, int(w * 0.02))
+                pad_y = max(4, int(h * 0.01))
+                x0 = max(0, pos[0] - pad_x)
+                y0 = max(0, pos[1] - pad_y)
+                x1 = min(w, pos[0] + text_w + pad_x)
+                y1 = min(h, pos[1] + text_h + pad_y)
+                strip_alpha = random.uniform(0.15, 0.30)
+                strip_is_dark = random.random() < 0.5
+                strip_color = (0, 0, 0) if strip_is_dark else (255, 255, 255)
+                overlay_draw.rectangle([x0, y0, x1, y1], fill=strip_color + (int(255 * strip_alpha),))
+
+        else:  # diagonal
+            # 对角线：覆盖更大
+            font_size = max(MIN_TEXT_HEIGHT_PX, int(h * random.uniform(0.10, 0.18) * scale_boost))
+            font = get_font(font_size)
+            text_w, text_h = get_text_bbox(overlay_draw, text, font)
+            diag_pos = random.uniform(0.20, 0.75)
+            pos = (int(diag_pos * (w - text_w)), int(diag_pos * (h - text_h)))
+            rotation = random.choice([random.uniform(18, 28), random.uniform(-28, -18)])
+
+        # 颜色策略：黑/白二选一 + 可选描边/阴影
+        prefer_dark_text = random.random() < 0.55
+        main_color = (0, 0, 0) if prefer_dark_text else (255, 255, 255)
+        outline_color = (255, 255, 255) if prefer_dark_text else (0, 0, 0)
+
+        effect = random.choice(['none', 'outline', 'shadow'])
+        if effect == 'outline':
+            outline_w = random.randint(1, 2)
+            outline_alpha = max(MIN_ALPHA, alpha * 0.65)
+            for dx, dy in [(-outline_w, 0), (outline_w, 0), (0, -outline_w), (0, outline_w)]:
+                overlay = draw_text_with_alpha(overlay, (pos[0] + dx, pos[1] + dy), text, font, outline_color, outline_alpha)
+        elif effect == 'shadow':
+            shadow_offset = random.randint(1, 2)
+            shadow_alpha = max(MIN_ALPHA, alpha * 0.55)
+            overlay = draw_text_with_alpha(overlay, (pos[0] + shadow_offset, pos[1] + shadow_offset), text, font, (0, 0, 0), shadow_alpha)
+
+        overlay = draw_text_with_alpha(overlay, pos, text, font, main_color, alpha)
+
+        # 重复次数：attempt 越大越倾向重复
+        repeats = 1
+        if random.random() < (0.85 + attempt * 0.10):
+            repeats = 2
+        if random.random() < (0.35 + attempt * 0.20):
+            repeats = 3
+
+        for _ in range(repeats - 1):
+            dx = random.randint(int(w * 0.05), int(w * 0.18))
+            dy = random.randint(int(h * 0.03), int(h * 0.12))
+            pos2 = (max(0, min(pos[0] - dx, w - text_w)), max(0, min(pos[1] - dy, h - text_h)))
+            alpha2 = max(MIN_ALPHA, alpha * random.uniform(0.75, 1.0))
+
+            if effect == 'outline':
+                outline_w = random.randint(1, 2)
+                outline_alpha = max(MIN_ALPHA, alpha2 * 0.65)
+                for ddx, ddy in [(-outline_w, 0), (outline_w, 0), (0, -outline_w), (0, outline_w)]:
+                    overlay = draw_text_with_alpha(overlay, (pos2[0] + ddx, pos2[1] + ddy), text, font, outline_color, outline_alpha)
+            elif effect == 'shadow':
+                shadow_offset = random.randint(1, 2)
+                shadow_alpha = max(MIN_ALPHA, alpha2 * 0.55)
+                overlay = draw_text_with_alpha(overlay, (pos2[0] + shadow_offset, pos2[1] + shadow_offset), text, font, (0, 0, 0), shadow_alpha)
+
+            overlay = draw_text_with_alpha(overlay, pos2, text, font, main_color, alpha2)
+
+        if rotation != 0:
+            overlay = overlay.rotate(rotation, expand=False, fillcolor=(255, 255, 255, 0))
+
+        # 尝试满足 coverage
+        if not ENABLE_VISIBILITY_VALIDATION:
+            return overlay
+
+        try:
+            overlay_array = np.array(overlay)
+            res = validate_watermark_visibility(overlay_array, w, h)
+            if res['is_visible']:
+                return overlay
+        except Exception:
+            return overlay
+
+    # 最后兜底：返回最后一次生成结果（由外层重试机制兜住）
     return overlay
 
 # ============================================================================
@@ -1289,6 +1469,10 @@ def generate_watermark_variant(image_path, output_index, max_retries=3):
         style_functions.append(('wechat_svg_corner_id', lambda: wechat_svg_corner_id(w, h)))
     if 'red_transparent_text' in ENABLED_STYLES:
         style_functions.append(('red_transparent_text', lambda: red_transparent_text(w, h)))
+    if 'elecfans_chinese_text' in ENABLED_STYLES:
+        style_functions.append(('elecfans_chinese_text', lambda: elecfans_chinese_text(w, h)))
+    if 'random_slanted_text' in ENABLED_STYLES:
+        style_functions.append(('random_slanted_text', lambda: random_slanted_text(w, h)))
     
     if not style_functions:
         print(f"警告: 没有启用的风格")
@@ -1351,7 +1535,7 @@ def generate_watermark_variant(image_path, output_index, max_retries=3):
 def process_image(image_path):
     """处理单张图像，生成N个变体"""
     stem = Path(image_path).stem
-    print(f"处理: {stem}")
+    # print(f"处理: {stem}")
     
     success_count = 0
     for variant_idx in range(NUM_VARIANTS_PER_IMAGE):
@@ -1373,7 +1557,7 @@ def process_image(image_path):
         
         success_count += 1
     
-    print(f"  ✓ 生成 {success_count}/{NUM_VARIANTS_PER_IMAGE} 个变体")
+    # print(f"  ✓ 生成 {success_count}/{NUM_VARIANTS_PER_IMAGE} 个变体")
     return success_count
 
 # ============================================================================
@@ -1418,9 +1602,25 @@ def main():
     print()
     
     total_variants = 0
-    for image_path in image_files:
-        count = process_image(image_path)
-        total_variants += count
+    
+    # 使用多进程并行处理
+    num_workers = max(1, multiprocessing.cpu_count() - 1)
+    print(f"正在使用 {num_workers} 个进程并行生成...")
+    
+    with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+        # 提交任务
+        futures = [executor.submit(process_image, img_path) for img_path in image_files]
+        
+        # 获取结果
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            try:
+                count = future.result()
+                total_variants += count
+                # 简单的进度显示
+                if (i + 1) % 5 == 0 or (i + 1) == len(image_files):
+                    print(f"进度: {i + 1}/{len(image_files)} 图像已处理")
+            except Exception as e:
+                print(f"处理任务时发生错误: {e}")
     
     print()
     print("=" * 60)

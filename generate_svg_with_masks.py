@@ -46,10 +46,10 @@ ENABLE_VISIBILITY_VALIDATION = True
 # ============================================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-NUM_VARIANTS_PER_IMAGE = 32
+NUM_VARIANTS_PER_IMAGE = 64
 INPUT_DIR = "/home/kaga/Desktop/watermaker remover/20251127_no_watermark_demo"
-OUTPUT_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_images")
-MASK_DIR = os.path.join(SCRIPT_DIR, "merged_watermark_masks")
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "data/merged_watermark_images")
+MASK_DIR = os.path.join(SCRIPT_DIR, "data/merged_watermark_masks")
 
 # SVG 资源配置
 ELECFANS_LOGO_SVG = os.path.join(SCRIPT_DIR, "logos/elecfans-logo.svg")

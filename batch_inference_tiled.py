@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import Config
 from models.unet import UNet
+from models.optimized_unet import AttentionResUNet
 
 
 class TiledInference:
@@ -192,7 +193,8 @@ class TiledInference:
 
 def load_model(checkpoint_path, device):
     """加载训练好的模型"""
-    model = UNet(n_channels=3, n_classes=3, bilinear=False)
+    # model = UNet(n_channels=3, n_classes=3, bilinear=False)
+    model = AttentionResUNet(n_channels=3, n_classes=3)
     
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -290,7 +292,7 @@ def main():
     
     # 设置输出目录
     if args.output is None:
-        args.output = os.path.join(config.PROJECT_ROOT, "results_tiled_enhanced_")
+        args.output = os.path.join(config.PROJECT_ROOT, "results_tiled_enhanced_c_b")
     
     # 查找检查点
     if args.checkpoint is None:

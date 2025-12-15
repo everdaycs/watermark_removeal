@@ -11,6 +11,7 @@ import numpy as np
 
 from config import Config
 from models.unet import UNet, ResidualUNet
+from models.optimized_unet import AttentionResUNet
 from dataset import create_dataloaders
 from losses import CombinedLoss
 
@@ -157,7 +158,8 @@ def train():
     
     # 创建模型
     print("创建模型...")
-    model = UNet(n_channels=3, n_classes=3, bilinear=False)
+    # model = UNet(n_channels=3, n_classes=3, bilinear=False)
+    model = AttentionResUNet(n_channels=3, n_classes=3)
     model = model.to(device)
     
     # 计算参数量

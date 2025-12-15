@@ -86,6 +86,9 @@ test_data/
 results_tiled/
 batch_results/
 inference_output/
+results_finetune/
+results_finetune_default_test/
+results_finetune_test/
 
 # 配置文件（可能包含敏感信息）
 config/local_config.py
@@ -98,5 +101,14 @@ config/private_config.py
 ._*
 .Spotlight-V100
 .Trashes
+
+# 训练日志和检查点
+logs_finetune/
+checkpoints_finetune/
+
+# 临时训练数据
+training_data/
+validation_data/
+test_data/
 ehthumbs.db
 Thumbs.db

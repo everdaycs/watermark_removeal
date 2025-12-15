@@ -84,6 +84,48 @@ python test_setup.py
 
 ---
 
+## 🧪 微调（Fine-tune）模型推理
+
+如果你已经使用 `train_finetune.py` 训练出了微调权重（默认保存到 `checkpoints_finetune/finetune_elecfans_best.pth`），可以使用脚本 `finetune_inference.py` 做推理。
+
+### 1) 单张图片推理（默认：整体 resize 到 512 再还原）
+
+```bash
+python finetune_inference.py \
+    --input "/path/to/one_image.jpg" \
+    --output "results_finetune"
+```
+
+### 2) 文件夹批量推理
+
+```bash
+python finetune_inference.py \
+    --input "/path/to/input_dir" \
+    --output "results_finetune"
+```
+
+### 3) 分块推理（推荐：高分辨率图像保细节）
+
+```bash
+python finetune_inference.py \
+    --input "/path/to/input_dir" \
+    --output "results_finetune_tiled" \
+    --tiled \
+    --tile-size 512 \
+    --overlap 64
+```
+
+### 4) 指定微调权重路径（可选）
+
+```bash
+python finetune_inference.py \
+    --input "/path/to/input_dir" \
+    --output "results_finetune" \
+    --checkpoint "checkpoints_finetune/finetune_elecfans_best.pth"
+```
+
+---
+
 ## 📊 数据准备
 
 ### 数据集结构
